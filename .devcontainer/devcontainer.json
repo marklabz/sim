@@ -1,1 +1,6 @@
-
+{
+  "name": "Sim Dev Environment",
+  "dockerComposeFile": ["docker-compose.yml"],
+  "service": "app",
+  "workspaceFolder": "/workspace"
+}
