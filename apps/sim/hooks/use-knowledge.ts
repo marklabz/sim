@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import Fuse from 'fuse.js'
+import { createLogger } from '@/lib/logs/console/logger'
 import { type ChunkData, type DocumentData, useKnowledgeStore } from '@/stores/knowledge/store'
+
+const logger = createLogger('UseKnowledgeBase')
 
 export function useKnowledgeBase(id: string) {
   const { getKnowledgeBase, getCachedKnowledgeBase, loadingKnowledgeBases } = useKnowledgeStore()
@@ -22,6 +25,7 @@ export function useKnowledgeBase(id: string) {
       } catch (err) {
         if (isMounted) {
           setError(err instanceof Error ? err.message : 'Failed to load knowledge base')
+          logger.error(`Failed to load knowledge base ${id}:`, err)
         }
       }
     }
@@ -45,7 +49,13 @@ const DEFAULT_PAGE_SIZE = 50
 
 export function useKnowledgeBaseDocuments(
   knowledgeBaseId: string,
-  options?: { search?: string; limit?: number; offset?: number }
+  options?: {
+    search?: string
+    limit?: number
+    offset?: number
+    sortBy?: string
+    sortOrder?: string
+  }
 ) {
   const { getDocuments, getCachedDocuments, loadingDocuments, updateDocument, refreshDocuments } =
     useKnowledgeStore()
@@ -55,10 +65,12 @@ export function useKnowledgeBaseDocuments(
   const documentsCache = getCachedDocuments(knowledgeBaseId)
   const isLoading = loadingDocuments.has(knowledgeBaseId)
 
-  // Load documents with server-side pagination and search
+  // Load documents with server-side pagination, search, and sorting
   const requestLimit = options?.limit || DEFAULT_PAGE_SIZE
   const requestOffset = options?.offset || 0
   const requestSearch = options?.search
+  const requestSortBy = options?.sortBy
+  const requestSortOrder = options?.sortOrder
 
   useEffect(() => {
     if (!knowledgeBaseId || isLoading) return
@@ -72,10 +84,13 @@ export function useKnowledgeBaseDocuments(
           search: requestSearch,
           limit: requestLimit,
           offset: requestOffset,
+          sortBy: requestSortBy,
+          sortOrder: requestSortOrder,
         })
       } catch (err) {
         if (isMounted) {
           setError(err instanceof Error ? err.message : 'Failed to load documents')
+          logger.error(`Failed to load documents for knowledge base ${knowledgeBaseId}:`, err)
         }
       }
     }
@@ -85,7 +100,16 @@ export function useKnowledgeBaseDocuments(
     return () => {
       isMounted = false
     }
-  }, [knowledgeBaseId, isLoading, getDocuments, requestSearch, requestLimit, requestOffset])
+  }, [
+    knowledgeBaseId,
+    isLoading,
+    getDocuments,
+    requestSearch,
+    requestLimit,
+    requestOffset,
+    requestSortBy,
+    requestSortOrder,
+  ])
 
   // Use server-side filtered and paginated results directly
   const documents = documentsCache?.documents || []
@@ -103,15 +127,27 @@ export function useKnowledgeBaseDocuments(
         search: requestSearch,
         limit: requestLimit,
         offset: requestOffset,
+        sortBy: requestSortBy,
+        sortOrder: requestSortOrder,
       })
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to refresh documents')
+      logger.error(`Failed to refresh documents for knowledge base ${knowledgeBaseId}:`, err)
     }
-  }, [knowledgeBaseId, refreshDocuments, requestSearch, requestLimit, requestOffset])
+  }, [
+    knowledgeBaseId,
+    refreshDocuments,
+    requestSearch,
+    requestLimit,
+    requestOffset,
+    requestSortBy,
+    requestSortOrder,
+  ])
 
   const updateDocumentLocal = useCallback(
     (documentId: string, updates: Partial<DocumentData>) => {
       updateDocument(knowledgeBaseId, documentId, updates)
+      logger.info(`Updated document ${documentId} for knowledge base ${knowledgeBaseId}`)
     },
     [knowledgeBaseId, updateDocument]
   )
@@ -175,10 +211,11 @@ export function useKnowledgeBasesList(workspaceId?: string) {
           retryTimeoutId = setTimeout(() => {
             if (isMounted) {
               loadData(attempt + 1)
+              logger.warn(`Failed to load knowledge bases list, retrying... ${attempt + 1}`)
             }
           }, delay)
         } else {
-          console.error('All retry attempts failed for knowledge bases list:', err)
+          logger.error('All retry attempts failed for knowledge bases list:', err)
           setError(errorMessage)
           setRetryCount(maxRetries)
         }
@@ -206,7 +243,7 @@ export function useKnowledgeBasesList(workspaceId?: string) {
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to refresh knowledge bases'
       setError(errorMessage)
-      console.error('Error refreshing knowledge bases list:', err)
+      logger.error('Error refreshing knowledge bases list:', err)
     }
   }
 
@@ -228,7 +265,7 @@ export function useKnowledgeBasesList(workspaceId?: string) {
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to refresh knowledge bases'
       setError(errorMessage)
-      console.error('Error force refreshing knowledge bases list:', err)
+      logger.error('Error force refreshing knowledge bases list:', err)
     }
   }
 
@@ -332,6 +369,7 @@ export function useDocumentChunks(
       } catch (err) {
         if (isMounted) {
           setError(err instanceof Error ? err.message : 'Failed to load chunks')
+          logger.error(`Failed to load chunks for document ${documentId}:`, err)
         }
       } finally {
         if (isMounted) {
@@ -530,6 +568,7 @@ export function useDocumentChunks(
       } catch (err) {
         if (isMounted) {
           setError(err instanceof Error ? err.message : 'Failed to load chunks')
+          logger.error(`Failed to load chunks for document ${documentId}:`, err)
         }
       } finally {
         if (isMounted) {
@@ -570,6 +609,7 @@ export function useDocumentChunks(
 
     // Update loading state based on store
     if (!isStoreLoading && isLoading) {
+      logger.info(`Chunks loaded for document ${documentId}`)
       setIsLoading(false)
     }
   }, [documentId, isStoreLoading, isLoading, initialLoadDone, serverSearchQuery, serverCurrentPage])
@@ -600,6 +640,7 @@ export function useDocumentChunks(
       return fetchedChunks
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load page')
+      logger.error(`Failed to load page for document ${documentId}:`, err)
       throw err
     } finally {
       setIsLoading(false)
@@ -647,6 +688,7 @@ export function useDocumentChunks(
       return fetchedChunks
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to refresh chunks')
+      logger.error(`Failed to refresh chunks for document ${documentId}:`, err)
       throw err
     } finally {
       setIsLoading(false)
@@ -675,6 +717,7 @@ export function useDocumentChunks(
       return searchResults
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to search chunks')
+      logger.error(`Failed to search chunks for document ${documentId}:`, err)
       throw err
     } finally {
       setIsLoading(false)

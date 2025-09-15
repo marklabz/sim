@@ -7,7 +7,7 @@ export const OutlookBlock: BlockConfig<OutlookResponse> = {
   name: 'Outlook',
   description: 'Access Outlook',
   longDescription:
-    'Integrate Outlook functionality to read, draft, andsend email messages within your workflow. Automate email communications and process email content using OAuth authentication.',
+    'Integrate Outlook into the workflow. Can read, draft, and send email messages. Requires OAuth. Can be used in trigger mode to trigger a workflow when a new email is received.',
   docsLink: 'https://docs.sim.ai/tools/outlook',
   category: 'tools',
   bgColor: '#E0E0E0',
@@ -22,6 +22,7 @@ export const OutlookBlock: BlockConfig<OutlookResponse> = {
         { label: 'Send Email', id: 'send_outlook' },
         { label: 'Draft Email', id: 'draft_outlook' },
         { label: 'Read Email', id: 'read_outlook' },
+        { label: 'Forward Email', id: 'forward_outlook' },
       ],
       value: () => 'send_outlook',
     },
@@ -51,8 +52,29 @@ export const OutlookBlock: BlockConfig<OutlookResponse> = {
       type: 'short-input',
       layout: 'full',
       placeholder: 'Recipient email address',
-      condition: { field: 'operation', value: ['send_outlook', 'draft_outlook'] },
+      condition: {
+        field: 'operation',
+        value: ['send_outlook', 'draft_outlook', 'forward_outlook'],
+      },
       required: true,
+    },
+    {
+      id: 'messageId',
+      title: 'Message ID',
+      type: 'short-input',
+      layout: 'full',
+      placeholder: 'Message ID to forward',
+      condition: { field: 'operation', value: ['forward_outlook'] },
+      required: true,
+    },
+    {
+      id: 'comment',
+      title: 'Comment',
+      type: 'long-input',
+      layout: 'full',
+      placeholder: 'Optional comment to include when forwarding',
+      condition: { field: 'operation', value: ['forward_outlook'] },
+      required: false,
     },
     {
       id: 'subject',
@@ -120,6 +142,7 @@ export const OutlookBlock: BlockConfig<OutlookResponse> = {
       title: 'Folder',
       type: 'folder-selector',
       layout: 'full',
+      canonicalParamId: 'folder',
       provider: 'outlook',
       serviceId: 'outlook',
       requiredScopes: ['Mail.ReadWrite', 'Mail.ReadBasic', 'Mail.Read'],
@@ -134,6 +157,7 @@ export const OutlookBlock: BlockConfig<OutlookResponse> = {
       title: 'Folder',
       type: 'short-input',
       layout: 'full',
+      canonicalParamId: 'folder',
       placeholder: 'Enter Outlook folder name (e.g., INBOX, SENT, or custom folder)',
       mode: 'advanced',
       condition: { field: 'operation', value: 'read_outlook' },
@@ -157,7 +181,7 @@ export const OutlookBlock: BlockConfig<OutlookResponse> = {
     },
   ],
   tools: {
-    access: ['outlook_send', 'outlook_draft', 'outlook_read'],
+    access: ['outlook_send', 'outlook_draft', 'outlook_read', 'outlook_forward'],
     config: {
       tool: (params) => {
         switch (params.operation) {
@@ -167,18 +191,18 @@ export const OutlookBlock: BlockConfig<OutlookResponse> = {
             return 'outlook_read'
           case 'draft_outlook':
             return 'outlook_draft'
+          case 'forward_outlook':
+            return 'outlook_forward'
           default:
             throw new Error(`Invalid Outlook operation: ${params.operation}`)
         }
       },
       params: (params) => {
-        // Pass the credential directly from the credential field
         const { credential, folder, manualFolder, ...rest } = params
 
-        // Handle folder input (selector or manual)
+        // Handle both selector and manual folder input
         const effectiveFolder = (folder || manualFolder || '').trim()
 
-        // Set default folder to INBOX if not specified
         if (rest.operation === 'read_outlook') {
           rest.folder = effectiveFolder || 'INBOX'
         }
@@ -197,6 +221,9 @@ export const OutlookBlock: BlockConfig<OutlookResponse> = {
     to: { type: 'string', description: 'Recipient email address' },
     subject: { type: 'string', description: 'Email subject' },
     body: { type: 'string', description: 'Email content' },
+    // Forward operation inputs
+    messageId: { type: 'string', description: 'Message ID to forward' },
+    comment: { type: 'string', description: 'Optional comment for forwarding' },
     // Read operation inputs
     folder: { type: 'string', description: 'Email folder' },
     manualFolder: { type: 'string', description: 'Manual folder name' },

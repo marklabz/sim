@@ -46,7 +46,7 @@ const initialState = {
         isDeployed: false,
         isPublished: false,
       },
-      timestamp: Date.now(),
+      timestamp: 0,
       action: 'Initial state',
       subblockValues: {},
     },
@@ -435,7 +435,6 @@ export const useWorkflowStore = create<WorkflowStoreWithHistory>()(
         set(newState)
         pushHistory(set, get, newState, 'Remove connection')
         get().updateLastSaved()
-        // get().sync.markDirty() // Disabled: Using socket-based sync
       },
 
       clear: () => {
@@ -1070,12 +1069,12 @@ export const useWorkflowStore = create<WorkflowStoreWithHistory>()(
                 })
 
                 if (!updateResponse.ok) {
-                  console.error('Failed to update webhook status')
+                  logger.error('Failed to update webhook status')
                 }
               }
             }
           } catch (error) {
-            console.error('Error toggling webhook status:', error)
+            logger.error('Error toggling webhook status:', error)
           }
         }
 

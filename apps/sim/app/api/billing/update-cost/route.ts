@@ -1,10 +1,10 @@
-import crypto from 'crypto'
 import { eq, sql } from 'drizzle-orm'
 import { type NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { checkInternalApiKey } from '@/lib/copilot/utils'
 import { isBillingEnabled } from '@/lib/environment'
 import { createLogger } from '@/lib/logs/console/logger'
+import { generateRequestId } from '@/lib/utils'
 import { db } from '@/db'
 import { userStats } from '@/db/schema'
 import { calculateCost } from '@/providers/utils'
@@ -16,7 +16,8 @@ const UpdateCostSchema = z.object({
   input: z.number().min(0, 'Input tokens must be a non-negative number'),
   output: z.number().min(0, 'Output tokens must be a non-negative number'),
   model: z.string().min(1, 'Model is required'),
-  multiplier: z.number().min(0),
+  inputMultiplier: z.number().min(0),
+  outputMultiplier: z.number().min(0),
 })
 
 /**
@@ -24,7 +25,7 @@ const UpdateCostSchema = z.object({
  * Update user cost based on token usage with internal API key auth
  */
 export async function POST(req: NextRequest) {
-  const requestId = crypto.randomUUID().slice(0, 8)
+  const requestId = generateRequestId()
   const startTime = Date.now()
 
   try {
@@ -75,14 +76,15 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    const { userId, input, output, model, multiplier } = validation.data
+    const { userId, input, output, model, inputMultiplier, outputMultiplier } = validation.data
 
     logger.info(`[${requestId}] Processing cost update`, {
       userId,
       input,
       output,
       model,
-      multiplier,
+      inputMultiplier,
+      outputMultiplier,
     })
 
     const finalPromptTokens = input
@@ -95,7 +97,8 @@ export async function POST(req: NextRequest) {
       finalPromptTokens,
       finalCompletionTokens,
       false,
-      multiplier
+      inputMultiplier,
+      outputMultiplier
     )
 
     logger.info(`[${requestId}] Cost calculation result`, {
@@ -104,7 +107,8 @@ export async function POST(req: NextRequest) {
       promptTokens: finalPromptTokens,
       completionTokens: finalCompletionTokens,
       totalTokens: totalTokens,
-      multiplier,
+      inputMultiplier,
+      outputMultiplier,
       costResult,
     })
 
@@ -115,52 +119,34 @@ export async function POST(req: NextRequest) {
     const userStatsRecords = await db.select().from(userStats).where(eq(userStats.userId, userId))
 
     if (userStatsRecords.length === 0) {
-      // Create new user stats record (same logic as ExecutionLogger)
-      await db.insert(userStats).values({
-        id: crypto.randomUUID(),
-        userId: userId,
-        totalManualExecutions: 0,
-        totalApiCalls: 0,
-        totalWebhookTriggers: 0,
-        totalScheduledExecutions: 0,
-        totalChatExecutions: 0,
-        totalTokensUsed: totalTokens,
-        totalCost: costToStore.toString(),
-        currentPeriodCost: costToStore.toString(),
-        // Copilot usage tracking
-        totalCopilotCost: costToStore.toString(),
-        totalCopilotTokens: totalTokens,
-        totalCopilotCalls: 1,
-        lastActive: new Date(),
-      })
-
-      logger.info(`[${requestId}] Created new user stats record`, {
-        userId,
-        totalCost: costToStore,
-        totalTokens,
-      })
-    } else {
-      // Update existing user stats record (same logic as ExecutionLogger)
-      const updateFields = {
-        totalTokensUsed: sql`total_tokens_used + ${totalTokens}`,
-        totalCost: sql`total_cost + ${costToStore}`,
-        currentPeriodCost: sql`current_period_cost + ${costToStore}`,
-        // Copilot usage tracking increments
-        totalCopilotCost: sql`total_copilot_cost + ${costToStore}`,
-        totalCopilotTokens: sql`total_copilot_tokens + ${totalTokens}`,
-        totalCopilotCalls: sql`total_copilot_calls + 1`,
-        totalApiCalls: sql`total_api_calls`,
-        lastActive: new Date(),
-      }
-
-      await db.update(userStats).set(updateFields).where(eq(userStats.userId, userId))
-
-      logger.info(`[${requestId}] Updated user stats record`, {
-        userId,
-        addedCost: costToStore,
-        addedTokens: totalTokens,
-      })
+      logger.error(
+        `[${requestId}] User stats record not found - should be created during onboarding`,
+        {
+          userId,
+        }
+      )
+      return NextResponse.json({ error: 'User stats record not found' }, { status: 500 })
     }
+    // Update existing user stats record (same logic as ExecutionLogger)
+    const updateFields = {
+      totalTokensUsed: sql`total_tokens_used + ${totalTokens}`,
+      totalCost: sql`total_cost + ${costToStore}`,
+      currentPeriodCost: sql`current_period_cost + ${costToStore}`,
+      // Copilot usage tracking increments
+      totalCopilotCost: sql`total_copilot_cost + ${costToStore}`,
+      totalCopilotTokens: sql`total_copilot_tokens + ${totalTokens}`,
+      totalCopilotCalls: sql`total_copilot_calls + 1`,
+      totalApiCalls: sql`total_api_calls`,
+      lastActive: new Date(),
+    }
+
+    await db.update(userStats).set(updateFields).where(eq(userStats.userId, userId))
+
+    logger.info(`[${requestId}] Updated user stats record`, {
+      userId,
+      addedCost: costToStore,
+      addedTokens: totalTokens,
+    })
 
     const duration = Date.now() - startTime
 

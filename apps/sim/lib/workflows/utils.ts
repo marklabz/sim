@@ -3,14 +3,48 @@ import { NextResponse } from 'next/server'
 import { getEnv } from '@/lib/env'
 import { createLogger } from '@/lib/logs/console/logger'
 import { db } from '@/db'
-import { userStats, workflow as workflowTable } from '@/db/schema'
+import { apiKey, userStats, workflow as workflowTable } from '@/db/schema'
 import type { ExecutionResult } from '@/executor/types'
 import type { WorkflowState } from '@/stores/workflows/workflow/types'
 
 const logger = createLogger('WorkflowUtils')
 
 export async function getWorkflowById(id: string) {
-  const workflows = await db.select().from(workflowTable).where(eq(workflowTable.id, id)).limit(1)
+  const workflows = await db
+    .select({
+      id: workflowTable.id,
+      userId: workflowTable.userId,
+      workspaceId: workflowTable.workspaceId,
+      folderId: workflowTable.folderId,
+      name: workflowTable.name,
+      description: workflowTable.description,
+      color: workflowTable.color,
+      lastSynced: workflowTable.lastSynced,
+      createdAt: workflowTable.createdAt,
+      updatedAt: workflowTable.updatedAt,
+      isDeployed: workflowTable.isDeployed,
+      deployedState: workflowTable.deployedState,
+      deployedAt: workflowTable.deployedAt,
+      pinnedApiKeyId: workflowTable.pinnedApiKeyId,
+      collaborators: workflowTable.collaborators,
+      runCount: workflowTable.runCount,
+      lastRunAt: workflowTable.lastRunAt,
+      variables: workflowTable.variables,
+      isPublished: workflowTable.isPublished,
+      marketplaceData: workflowTable.marketplaceData,
+      pinnedApiKey: {
+        id: apiKey.id,
+        name: apiKey.name,
+        key: apiKey.key,
+        type: apiKey.type,
+        workspaceId: apiKey.workspaceId,
+      },
+    })
+    .from(workflowTable)
+    .leftJoin(apiKey, eq(workflowTable.pinnedApiKeyId, apiKey.id))
+    .where(eq(workflowTable.id, id))
+    .limit(1)
+
   return workflows[0]
 }
 
@@ -45,7 +79,7 @@ export async function updateWorkflowRunCounts(workflowId: string, runs = 1) {
     await db
       .update(workflowTable)
       .set({
-        runCount: workflow.runCount + runs,
+        runCount: (workflow.runCount as number) + runs,
         lastRunAt: new Date(),
       })
       .where(eq(workflowTable.id, workflowId))
@@ -59,29 +93,19 @@ export async function updateWorkflowRunCounts(workflowId: string, runs = 1) {
         .limit(1)
 
       if (userStatsRecord.length === 0) {
-        // Create new record
-        await db.insert(userStats).values({
-          id: crypto.randomUUID(),
+        console.warn('User stats record not found - should be created during onboarding', {
           userId: workflow.userId,
-          totalManualExecutions: runs,
-          totalApiCalls: 0,
-          totalWebhookTriggers: 0,
-          totalScheduledExecutions: 0,
-          totalChatExecutions: 0,
-          totalTokensUsed: 0,
-          totalCost: '0.00',
+        })
+        return // Skip stats update if record doesn't exist
+      }
+      // Update existing record
+      await db
+        .update(userStats)
+        .set({
+          totalManualExecutions: userStatsRecord[0].totalManualExecutions + runs,
           lastActive: new Date(),
         })
-      } else {
-        // Update existing record
-        await db
-          .update(userStats)
-          .set({
-            totalManualExecutions: userStatsRecord[0].totalManualExecutions + runs,
-            lastActive: new Date(),
-          })
-          .where(eq(userStats.userId, workflow.userId))
-      }
+        .where(eq(userStats.userId, workflow.userId))
     }
 
     return { success: true, runsAdded: runs }

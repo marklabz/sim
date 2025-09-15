@@ -12,6 +12,13 @@ interface EnvVarDropdownProps {
   cursorPosition: number
   onClose?: () => void
   style?: React.CSSProperties
+  workspaceId?: string
+  maxHeight?: string
+}
+
+interface EnvVarGroup {
+  label: string
+  variables: string[]
 }
 
 export const EnvVarDropdown: React.FC<EnvVarDropdownProps> = ({
@@ -23,14 +30,65 @@ export const EnvVarDropdown: React.FC<EnvVarDropdownProps> = ({
   cursorPosition,
   onClose,
   style,
+  workspaceId,
+  maxHeight = 'none',
 }) => {
-  const envVars = useEnvironmentStore((state) => Object.keys(state.variables))
+  const loadWorkspaceEnvironment = useEnvironmentStore((state) => state.loadWorkspaceEnvironment)
+  const userEnvVars = useEnvironmentStore((state) => Object.keys(state.variables))
+  const [workspaceEnvData, setWorkspaceEnvData] = useState<{
+    workspace: Record<string, string>
+    personal: Record<string, string>
+    conflicts: string[]
+  }>({ workspace: {}, personal: {}, conflicts: [] })
   const [selectedIndex, setSelectedIndex] = useState(0)
 
+  // Load workspace environment variables when workspaceId changes
+  useEffect(() => {
+    if (workspaceId && visible) {
+      loadWorkspaceEnvironment(workspaceId).then((data) => {
+        setWorkspaceEnvData(data)
+      })
+    }
+  }, [workspaceId, visible, loadWorkspaceEnvironment])
+
+  // Combine and organize environment variables
+  const envVarGroups: EnvVarGroup[] = []
+
+  if (workspaceId) {
+    // When workspaceId is provided, show both workspace and user env vars
+    const workspaceVars = Object.keys(workspaceEnvData.workspace)
+    const personalVars = Object.keys(workspaceEnvData.personal)
+
+    if (workspaceVars.length > 0) {
+      envVarGroups.push({ label: 'Workspace', variables: workspaceVars })
+    }
+    if (personalVars.length > 0) {
+      envVarGroups.push({ label: 'Personal', variables: personalVars })
+    }
+  } else {
+    // Fallback to user env vars only
+    if (userEnvVars.length > 0) {
+      envVarGroups.push({ label: 'Personal', variables: userEnvVars })
+    }
+  }
+
+  // Flatten all variables for filtering and selection
+  const allEnvVars = envVarGroups.flatMap((group) => group.variables)
+
   // Filter env vars based on search term
-  const filteredEnvVars = envVars.filter((envVar) =>
+  const filteredEnvVars = allEnvVars.filter((envVar) =>
     envVar.toLowerCase().includes(searchTerm.toLowerCase())
   )
+
+  // Create filtered groups for display
+  const filteredGroups = envVarGroups
+    .map((group) => ({
+      ...group,
+      variables: group.variables.filter((envVar) =>
+        envVar.toLowerCase().includes(searchTerm.toLowerCase())
+      ),
+    }))
+    .filter((group) => group.variables.length > 0)
 
   // Reset selection when filtered results change
   useEffect(() => {
@@ -84,12 +142,30 @@ export const EnvVarDropdown: React.FC<EnvVarDropdownProps> = ({
           case 'ArrowDown':
             e.preventDefault()
             e.stopPropagation()
-            setSelectedIndex((prev) => (prev < filteredEnvVars.length - 1 ? prev + 1 : prev))
+            setSelectedIndex((prev) => {
+              const newIndex = prev < filteredEnvVars.length - 1 ? prev + 1 : prev
+              setTimeout(() => {
+                const selectedElement = document.querySelector(`[data-env-var-index="${newIndex}"]`)
+                if (selectedElement) {
+                  selectedElement.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+                }
+              }, 0)
+              return newIndex
+            })
             break
           case 'ArrowUp':
             e.preventDefault()
             e.stopPropagation()
-            setSelectedIndex((prev) => (prev > 0 ? prev - 1 : prev))
+            setSelectedIndex((prev) => {
+              const newIndex = prev > 0 ? prev - 1 : prev
+              setTimeout(() => {
+                const selectedElement = document.querySelector(`[data-env-var-index="${newIndex}"]`)
+                if (selectedElement) {
+                  selectedElement.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+                }
+              }, 0)
+              return newIndex
+            })
             break
           case 'Enter':
             e.preventDefault()
@@ -124,24 +200,41 @@ export const EnvVarDropdown: React.FC<EnvVarDropdownProps> = ({
           No matching environment variables
         </div>
       ) : (
-        <div className='py-1'>
-          {filteredEnvVars.map((envVar, index) => (
-            <button
-              key={envVar}
-              className={cn(
-                'w-full px-3 py-1.5 text-left text-sm',
-                'hover:bg-accent hover:text-accent-foreground',
-                'focus:bg-accent focus:text-accent-foreground focus:outline-none',
-                index === selectedIndex && 'bg-accent text-accent-foreground'
+        <div
+          className={cn('py-1', maxHeight !== 'none' && 'overflow-y-auto')}
+          style={{
+            maxHeight: maxHeight !== 'none' ? maxHeight : undefined,
+          }}
+        >
+          {filteredGroups.map((group) => (
+            <div key={group.label}>
+              {filteredGroups.length > 1 && (
+                <div className='border-border/50 border-b px-3 py-1 font-medium text-muted-foreground/70 text-xs uppercase tracking-wide'>
+                  {group.label}
+                </div>
               )}
-              onMouseEnter={() => setSelectedIndex(index)}
-              onMouseDown={(e) => {
-                e.preventDefault() // Prevent input blur
-                handleEnvVarSelect(envVar)
-              }}
-            >
-              {envVar}
-            </button>
+              {group.variables.map((envVar) => {
+                const globalIndex = filteredEnvVars.indexOf(envVar)
+                return (
+                  <button
+                    key={`${group.label}-${envVar}`}
+                    data-env-var-index={globalIndex}
+                    className={cn(
+                      'w-full px-3 py-1.5 text-left text-sm',
+                      'focus:bg-accent focus:text-accent-foreground focus:outline-none',
+                      globalIndex === selectedIndex && 'bg-accent text-accent-foreground'
+                    )}
+                    onMouseEnter={() => setSelectedIndex(globalIndex)}
+                    onMouseDown={(e) => {
+                      e.preventDefault() // Prevent input blur
+                      handleEnvVarSelect(envVar)
+                    }}
+                  >
+                    {envVar}
+                  </button>
+                )
+              })}
+            </div>
           ))}
         </div>
       )}

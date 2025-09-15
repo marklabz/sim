@@ -32,6 +32,7 @@ import {
   getKeyboardShortcutText,
   useGlobalShortcuts,
 } from '@/app/workspace/[workspaceId]/w/hooks/use-keyboard-shortcuts'
+import { useSubscriptionStore } from '@/stores/subscription/store'
 import { useWorkflowDiffStore } from '@/stores/workflow-diff/store'
 import { useWorkflowRegistry } from '@/stores/workflows/registry/store'
 import type { WorkflowMetadata } from '@/stores/workflows/registry/types'
@@ -115,7 +116,7 @@ export function Sidebar() {
   const [isTemplatesLoading, setIsTemplatesLoading] = useState(false)
 
   // Refs
-  const workflowScrollAreaRef = useRef<HTMLDivElement>(null)
+  const workflowScrollAreaRef = useRef<HTMLDivElement | null>(null)
   const workspaceIdRef = useRef<string>(workspaceId)
   const routerRef = useRef<ReturnType<typeof useRouter>>(router)
   const isInitializedRef = useRef<boolean>(false)
@@ -690,21 +691,13 @@ export function Sidebar() {
         }
       })
 
-      // Sort by last modified date (newest first)
-      const sortByLastModified = (a: WorkflowMetadata, b: WorkflowMetadata) => {
-        const dateA =
-          a.lastModified instanceof Date
-            ? a.lastModified.getTime()
-            : new Date(a.lastModified).getTime()
-        const dateB =
-          b.lastModified instanceof Date
-            ? b.lastModified.getTime()
-            : new Date(b.lastModified).getTime()
-        return dateB - dateA
+      // Sort by creation date (newest first) for stable ordering
+      const sortByCreatedAt = (a: WorkflowMetadata, b: WorkflowMetadata) => {
+        return b.createdAt.getTime() - a.createdAt.getTime()
       }
 
-      regular.sort(sortByLastModified)
-      temp.sort(sortByLastModified)
+      regular.sort(sortByCreatedAt)
+      temp.sort(sortByCreatedAt)
     }
 
     return { regularWorkflows: regular, tempWorkflows: temp }
@@ -889,9 +882,7 @@ export function Sidebar() {
 
           {/* 2. Workspace Selector */}
           <div
-            className={`pointer-events-auto flex-shrink-0 ${
-              !isWorkspaceSelectorVisible ? 'hidden' : ''
-            }`}
+            className={`pointer-events-auto flex-shrink-0 ${!isWorkspaceSelectorVisible ? 'hidden' : ''}`}
           >
             <WorkspaceSelector
               workspaces={workspaces}
@@ -932,13 +923,15 @@ export function Sidebar() {
             }`}
           >
             <div className='px-2'>
-              <ScrollArea ref={workflowScrollAreaRef} className='h-[210px]' hideScrollbar={true}>
-                <FolderTree
-                  regularWorkflows={regularWorkflows}
-                  marketplaceWorkflows={tempWorkflows}
-                  isLoading={isLoading}
-                  onCreateWorkflow={handleCreateWorkflow}
-                />
+              <ScrollArea className='h-[210px]' hideScrollbar={true}>
+                <div ref={workflowScrollAreaRef}>
+                  <FolderTree
+                    regularWorkflows={regularWorkflows}
+                    marketplaceWorkflows={tempWorkflows}
+                    isLoading={isLoading}
+                    onCreateWorkflow={handleCreateWorkflow}
+                  />
+                </div>
               </ScrollArea>
             </div>
             {!isLoading && (
@@ -1005,16 +998,18 @@ export function Sidebar() {
           style={{ bottom: `${navigationBottom + SIDEBAR_HEIGHTS.NAVIGATION + SIDEBAR_GAP}px` }} // Navigation height + gap
         >
           <UsageIndicator
-            onClick={(badgeType) => {
-              if (badgeType === 'add') {
-                // Open settings modal on subscription tab
+            onClick={() => {
+              const subscriptionStore = useSubscriptionStore.getState()
+              const isBlocked = subscriptionStore.getBillingStatus() === 'blocked'
+              const canUpgrade = subscriptionStore.canUpgrade()
+
+              if (isBlocked || !canUpgrade) {
                 if (typeof window !== 'undefined') {
                   window.dispatchEvent(
                     new CustomEvent('open-settings', { detail: { tab: 'subscription' } })
                   )
                 }
               } else {
-                // Open subscription modal for upgrade
                 setShowSubscriptionModal(true)
               }
             }}
@@ -1036,6 +1031,7 @@ export function Sidebar() {
       <HelpModal open={showHelp} onOpenChange={setShowHelp} />
       <InviteModal open={showInviteMembers} onOpenChange={setShowInviteMembers} />
       <SubscriptionModal open={showSubscriptionModal} onOpenChange={setShowSubscriptionModal} />
+
       <SearchModal
         open={showSearchModal}
         onOpenChange={setShowSearchModal}

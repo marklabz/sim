@@ -2,8 +2,10 @@ import { tasks } from '@trigger.dev/sdk'
 import { and, eq } from 'drizzle-orm'
 import { type NextRequest, NextResponse } from 'next/server'
 import { checkServerSideUsageLimits } from '@/lib/billing'
+import { getHighestPrioritySubscription } from '@/lib/billing/core/subscription'
 import { env, isTruthy } from '@/lib/env'
 import { createLogger } from '@/lib/logs/console/logger'
+import { generateRequestId } from '@/lib/utils'
 import {
   handleSlackChallenge,
   handleWhatsAppVerification,
@@ -11,9 +13,8 @@ import {
 } from '@/lib/webhooks/utils'
 import { executeWebhookJob } from '@/background/webhook-execution'
 import { db } from '@/db'
-import { subscription, webhook, workflow } from '@/db/schema'
+import { webhook, workflow } from '@/db/schema'
 import { RateLimiter } from '@/services/queue'
-import type { SubscriptionPlan } from '@/services/queue/types'
 
 const logger = createLogger('WebhookTriggerAPI')
 
@@ -27,7 +28,7 @@ export const runtime = 'nodejs'
  * Handles verification requests from webhook providers and confirms endpoint exists.
  */
 export async function GET(request: NextRequest, { params }: { params: Promise<{ path: string }> }) {
-  const requestId = crypto.randomUUID().slice(0, 8)
+  const requestId = generateRequestId()
 
   try {
     const path = (await params).path
@@ -83,7 +84,7 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ path: string }> }
 ) {
-  const requestId = crypto.randomUUID().slice(0, 8)
+  const requestId = generateRequestId()
   let foundWorkflow: any = null
   let foundWebhook: any = null
 
@@ -248,20 +249,14 @@ export async function POST(
 
   // --- PHASE 3: Rate limiting for webhook execution ---
   try {
-    // Get user subscription for rate limiting
-    const [subscriptionRecord] = await db
-      .select({ plan: subscription.plan })
-      .from(subscription)
-      .where(eq(subscription.referenceId, foundWorkflow.userId))
-      .limit(1)
-
-    const subscriptionPlan = (subscriptionRecord?.plan || 'free') as SubscriptionPlan
+    // Get user subscription for rate limiting (checks both personal and org subscriptions)
+    const userSubscription = await getHighestPrioritySubscription(foundWorkflow.userId)
 
     // Check async rate limits (webhooks are processed asynchronously)
     const rateLimiter = new RateLimiter()
-    const rateLimitCheck = await rateLimiter.checkRateLimit(
+    const rateLimitCheck = await rateLimiter.checkRateLimitWithSubscription(
       foundWorkflow.userId,
-      subscriptionPlan,
+      userSubscription,
       'webhook',
       true // isAsync = true for webhook execution
     )

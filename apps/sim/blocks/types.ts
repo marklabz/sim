@@ -1,15 +1,12 @@
 import type { JSX, SVGProps } from 'react'
 import type { ToolResponse } from '@/tools/types'
 
-// Basic types
 export type BlockIcon = (props: SVGProps<SVGSVGElement>) => JSX.Element
 export type ParamType = 'string' | 'number' | 'boolean' | 'json'
 export type PrimitiveValueType = 'string' | 'number' | 'boolean' | 'json' | 'array' | 'any'
 
-// Block classification
 export type BlockCategory = 'blocks' | 'tools' | 'triggers'
 
-// Valid generation types for AI assistance
 export type GenerationType =
   | 'javascript-function-body'
   | 'typescript-function-body'
@@ -17,8 +14,14 @@ export type GenerationType =
   | 'json-object'
   | 'system-prompt'
   | 'custom-tool-schema'
+  | 'sql-query'
+  | 'postgrest'
+  | 'mongodb-filter'
+  | 'mongodb-pipeline'
+  | 'mongodb-sort'
+  | 'mongodb-documents'
+  | 'mongodb-update'
 
-// SubBlock types
 export type SubBlockType =
   | 'short-input' // Single line input
   | 'long-input' // Multi-line input
@@ -45,17 +48,17 @@ export type SubBlockType =
   | 'knowledge-tag-filters' // Multiple tag filters for knowledge bases
   | 'document-selector' // Document selector for knowledge bases
   | 'document-tag-entry' // Document tag entry for creating documents
+  | 'mcp-server-selector' // MCP server selector
+  | 'mcp-tool-selector' // MCP tool selector
+  | 'mcp-dynamic-args' // MCP dynamic arguments based on tool schema
   | 'input-format' // Input structure format
   | 'response-format' // Response structure format
   | 'file-upload' // File uploader
 
-// Component width setting
 export type SubBlockLayout = 'full' | 'half'
 
-// Tool result extraction
 export type ExtractToolOutput<T> = T extends ToolResponse ? T['output'] : never
 
-// Convert tool output to types
 export type ToolOutputToValueType<T> = T extends Record<string, any>
   ? {
       [K in keyof T]: T[K] extends string
@@ -70,17 +73,14 @@ export type ToolOutputToValueType<T> = T extends Record<string, any>
     }
   : never
 
-// Block output definition
 export type BlockOutput =
   | PrimitiveValueType
   | { [key: string]: PrimitiveValueType | Record<string, any> }
 
-// Output field definition with optional description
 export type OutputFieldDefinition =
   | PrimitiveValueType
   | { type: PrimitiveValueType; description?: string }
 
-// Parameter validation rules
 export interface ParamConfig {
   type: ParamType
   description?: string
@@ -98,14 +98,15 @@ export interface ParamConfig {
   }
 }
 
-// SubBlock configuration
 export interface SubBlockConfig {
   id: string
   title?: string
   type: SubBlockType
   layout?: SubBlockLayout
   mode?: 'basic' | 'advanced' | 'both' // Default is 'both' if not specified
+  canonicalParamId?: string
   required?: boolean
+  defaultValue?: string | number | boolean | Record<string, unknown> | Array<unknown>
   options?:
     | { label: string; id: string; icon?: React.ComponentType<{ className?: string }> }[]
     | (() => { label: string; id: string; icon?: React.ComponentType<{ className?: string }> }[])
@@ -175,7 +176,6 @@ export interface SubBlockConfig {
   dependsOn?: string[]
 }
 
-// Main block definition
 export interface BlockConfig<T extends ToolResponse = ToolResponse> {
   type: string
   name: string
@@ -207,7 +207,6 @@ export interface BlockConfig<T extends ToolResponse = ToolResponse> {
   }
 }
 
-// Output configuration rules
 export interface OutputConfig {
   type: BlockOutput
 }

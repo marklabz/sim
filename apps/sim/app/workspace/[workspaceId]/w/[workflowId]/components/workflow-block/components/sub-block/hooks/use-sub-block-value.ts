@@ -11,15 +11,14 @@ import { useWorkflowStore } from '@/stores/workflows/workflow/store'
 const logger = createLogger('SubBlockValue')
 
 interface UseSubBlockValueOptions {
-  debounceMs?: number
-  isStreaming?: boolean // Explicit streaming state
+  isStreaming?: boolean
   onStreamingEnd?: () => void
 }
 
 /**
  * Custom hook to get and set values for a sub-block in a workflow.
  * Handles complex object values properly by using deep equality comparison.
- * Includes automatic debouncing and explicit streaming mode for AI generation.
+ * Supports explicit streaming mode for AI generation.
  *
  * @param blockId The ID of the block containing the sub-block
  * @param subBlockId The ID of the sub-block
@@ -126,47 +125,15 @@ export function useSubBlockValue<T = any>(
         return
       }
 
+      const currentActiveWorkflowId = useWorkflowRegistry.getState().activeWorkflowId
+      if (!currentActiveWorkflowId) {
+        logger.warn('No active workflow ID when setting value', { blockId, subBlockId })
+        return
+      }
+
       // Use deep comparison to avoid unnecessary updates for complex objects
       if (!isEqual(valueRef.current, newValue)) {
         valueRef.current = newValue
-
-        // Update local store immediately for UI responsiveness
-        // The collaborative function will also update it, but that's okay for idempotency
-        useSubBlockStore.setState((state) => ({
-          workflowValues: {
-            ...state.workflowValues,
-            [activeWorkflowId || '']: {
-              ...state.workflowValues[activeWorkflowId || ''],
-              [blockId]: {
-                ...state.workflowValues[activeWorkflowId || '']?.[blockId],
-                [subBlockId]: newValue,
-              },
-            },
-          },
-        }))
-
-        // Handle model changes for provider-based blocks - clear API key when provider changes
-        if (
-          subBlockId === 'model' &&
-          isProviderBasedBlock &&
-          newValue &&
-          typeof newValue === 'string'
-        ) {
-          const currentApiKeyValue = useSubBlockStore.getState().getValue(blockId, 'apiKey')
-
-          // Only clear if there's currently an API key value
-          if (currentApiKeyValue && currentApiKeyValue !== '') {
-            const oldModelValue = storeValue as string
-            const oldProvider = oldModelValue ? getProviderFromModel(oldModelValue) : null
-            const newProvider = getProviderFromModel(newValue)
-
-            // Clear API key if provider changed
-            if (oldProvider !== newProvider) {
-              // Use collaborative function to clear the API key
-              collaborativeSetSubblockValue(blockId, 'apiKey', '')
-            }
-          }
-        }
 
         // Ensure we're passing the actual value, not a reference that might change
         const valueCopy =
@@ -176,13 +143,46 @@ export function useSubBlockValue<T = any>(
               ? JSON.parse(JSON.stringify(newValue))
               : newValue
 
-        // If streaming, just store the value without emitting
+        // If streaming, hold value locally and do not update global store to avoid render-phase updates
         if (isStreaming) {
           streamingValueRef.current = valueCopy
-        } else {
-          // Emit immediately - let the operation queue handle debouncing and deduplication
-          emitValue(valueCopy)
+          return
         }
+
+        // Update local store immediately for UI responsiveness (non-streaming)
+        useSubBlockStore.setState((state) => ({
+          workflowValues: {
+            ...state.workflowValues,
+            [currentActiveWorkflowId]: {
+              ...state.workflowValues[currentActiveWorkflowId],
+              [blockId]: {
+                ...state.workflowValues[currentActiveWorkflowId]?.[blockId],
+                [subBlockId]: newValue,
+              },
+            },
+          },
+        }))
+
+        // Handle model changes for provider-based blocks - clear API key when provider changes (non-streaming)
+        if (
+          subBlockId === 'model' &&
+          isProviderBasedBlock &&
+          newValue &&
+          typeof newValue === 'string'
+        ) {
+          const currentApiKeyValue = useSubBlockStore.getState().getValue(blockId, 'apiKey')
+          if (currentApiKeyValue && currentApiKeyValue !== '') {
+            const oldModelValue = storeValue as string
+            const oldProvider = oldModelValue ? getProviderFromModel(oldModelValue) : null
+            const newProvider = getProviderFromModel(newValue)
+            if (oldProvider !== newProvider) {
+              collaborativeSetSubblockValue(blockId, 'apiKey', '')
+            }
+          }
+        }
+
+        // Emit immediately; the client queue coalesces same-key ops and the server debounces
+        emitValue(valueCopy)
 
         if (triggerWorkflowUpdate) {
           useWorkflowStore.getState().triggerUpdate()
@@ -200,7 +200,6 @@ export function useSubBlockValue<T = any>(
       isStreaming,
       emitValue,
       isShowingDiff,
-      activeWorkflowId,
     ]
   )
 

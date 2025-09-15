@@ -540,6 +540,90 @@
       "when": 1755809024626,
       "tag": "0077_rapid_chimera",
       "breakpoints": true
+    },
+    {
+      "idx": 78,
+      "version": "7",
+      "when": 1756168384465,
+      "tag": "0078_supreme_madrox",
+      "breakpoints": true
+    },
+    {
+      "idx": 79,
+      "version": "7",
+      "when": 1756246702112,
+      "tag": "0079_shocking_shriek",
+      "breakpoints": true
+    },
+    {
+      "idx": 80,
+      "version": "7",
+      "when": 1756581886683,
+      "tag": "0080_left_riptide",
+      "breakpoints": true
+    },
+    {
+      "idx": 81,
+      "version": "7",
+      "when": 1756602783877,
+      "tag": "0081_yellow_shadow_king",
+      "breakpoints": true
+    },
+    {
+      "idx": 82,
+      "version": "7",
+      "when": 1756767479124,
+      "tag": "0082_light_blockbuster",
+      "breakpoints": true
+    },
+    {
+      "idx": 83,
+      "version": "7",
+      "when": 1756768177306,
+      "tag": "0083_ambiguous_dreadnoughts",
+      "breakpoints": true
+    },
+    {
+      "idx": 84,
+      "version": "7",
+      "when": 1757046301281,
+      "tag": "0084_even_lockheed",
+      "breakpoints": true
+    },
+    {
+      "idx": 85,
+      "version": "7",
+      "when": 1757348840739,
+      "tag": "0085_daffy_blacklash",
+      "breakpoints": true
+    },
+    {
+      "idx": 86,
+      "version": "7",
+      "when": 1757441740591,
+      "tag": "0086_breezy_sister_grimm",
+      "breakpoints": true
+    },
+    {
+      "idx": 87,
+      "version": "7",
+      "when": 1757448419436,
+      "tag": "0087_wealthy_landau",
+      "breakpoints": true
+    },
+    {
+      "idx": 88,
+      "version": "7",
+      "when": 1757619657920,
+      "tag": "0088_serious_firestar",
+      "breakpoints": true
+    },
+    {
+      "idx": 89,
+      "version": "7",
+      "when": 1757628623657,
+      "tag": "0089_amused_pete_wisdom",
+      "breakpoints": true
     }
   ]
 }

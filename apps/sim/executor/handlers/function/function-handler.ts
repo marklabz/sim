@@ -1,3 +1,4 @@
+import { DEFAULT_CODE_LANGUAGE } from '@/lib/execution/languages'
 import { createLogger } from '@/lib/logs/console/logger'
 import { BlockType } from '@/executor/consts'
 import type { BlockHandler, ExecutionContext } from '@/executor/types'
@@ -58,12 +59,17 @@ export class FunctionBlockHandler implements BlockHandler {
       'function_execute',
       {
         code: codeContent,
+        language: inputs.language || DEFAULT_CODE_LANGUAGE,
+        useLocalVM: !inputs.remoteExecution,
         timeout: inputs.timeout || 5000,
         envVars: context.environmentVariables || {},
         workflowVariables: context.workflowVariables || {},
         blockData: blockData, // Pass block data for variable resolution
         blockNameMapping: blockNameMapping, // Pass block name to ID mapping
-        _context: { workflowId: context.workflowId },
+        _context: {
+          workflowId: context.workflowId,
+          workspaceId: context.workspaceId,
+        },
       },
       false, // skipProxy
       false, // skipPostProcess

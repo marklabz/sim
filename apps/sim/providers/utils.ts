@@ -1,4 +1,4 @@
-import { getCostMultiplier, isHosted } from '@/lib/environment'
+import { isHosted } from '@/lib/environment'
 import { createLogger } from '@/lib/logs/console/logger'
 import { anthropicProvider } from '@/providers/anthropic'
 import { azureOpenAIProvider } from '@/providers/azure-openai'
@@ -26,10 +26,11 @@ import {
 } from '@/providers/models'
 import { ollamaProvider } from '@/providers/ollama'
 import { openaiProvider } from '@/providers/openai'
+import { openRouterProvider } from '@/providers/openrouter'
 import type { ProviderConfig, ProviderId, ProviderToolConfig } from '@/providers/types'
 import { xAIProvider } from '@/providers/xai'
 import { useCustomToolsStore } from '@/stores/custom-tools/store'
-import { useOllamaStore } from '@/stores/ollama/store'
+import { useProvidersStore } from '@/stores/providers/store'
 
 const logger = createLogger('ProviderUtils')
 
@@ -88,6 +89,11 @@ export const providers: Record<
     models: getProviderModelsFromDefinitions('azure-openai'),
     modelPatterns: PROVIDER_DEFINITIONS['azure-openai'].modelPatterns,
   },
+  openrouter: {
+    ...openRouterProvider,
+    models: getProviderModelsFromDefinitions('openrouter'),
+    modelPatterns: PROVIDER_DEFINITIONS.openrouter.modelPatterns,
+  },
   ollama: {
     ...ollamaProvider,
     models: getProviderModelsFromDefinitions('ollama'),
@@ -95,7 +101,6 @@ export const providers: Record<
   },
 }
 
-// Initialize all providers that have initialize method
 Object.entries(providers).forEach(([id, provider]) => {
   if (provider.initialize) {
     provider.initialize().catch((error) => {
@@ -106,10 +111,15 @@ Object.entries(providers).forEach(([id, provider]) => {
   }
 })
 
-// Function to update Ollama provider models
 export function updateOllamaProviderModels(models: string[]): void {
   updateOllamaModelsInDefinitions(models)
   providers.ollama.models = getProviderModelsFromDefinitions('ollama')
+}
+
+export async function updateOpenRouterProviderModels(models: string[]): Promise<void> {
+  const { updateOpenRouterModels } = await import('@/providers/models')
+  updateOpenRouterModels(models)
+  providers.openrouter.models = getProviderModelsFromDefinitions('openrouter')
 }
 
 export function getBaseModelProviders(): Record<string, ProviderId> {
@@ -434,7 +444,8 @@ export function calculateCost(
   promptTokens = 0,
   completionTokens = 0,
   useCachedInput = false,
-  customMultiplier?: number
+  inputMultiplier?: number,
+  outputMultiplier?: number
 ) {
   // First check if it's an embedding model
   let pricing = getEmbeddingModelPricing(model)
@@ -469,13 +480,9 @@ export function calculateCost(
       : pricing.input / 1_000_000)
 
   const outputCost = completionTokens * (pricing.output / 1_000_000)
-  const totalCost = inputCost + outputCost
-
-  const costMultiplier = customMultiplier ?? getCostMultiplier()
-
-  const finalInputCost = inputCost * costMultiplier
-  const finalOutputCost = outputCost * costMultiplier
-  const finalTotalCost = totalCost * costMultiplier
+  const finalInputCost = inputCost * (inputMultiplier ?? 1)
+  const finalOutputCost = outputCost * (outputMultiplier ?? 1)
+  const finalTotalCost = finalInputCost + finalOutputCost
 
   return {
     input: Number.parseFloat(finalInputCost.toFixed(8)), // Use 8 decimal places for small costs
@@ -538,6 +545,17 @@ export function getHostedModels(): string[] {
 }
 
 /**
+ * Determine if model usage should be billed to the user
+ *
+ * @param model The model name
+ * @returns true if the usage should be billed to the user
+ */
+export function shouldBillModelUsage(model: string): boolean {
+  const hostedModels = getHostedModels()
+  return hostedModels.includes(model)
+}
+
+/**
  * Get an API key for a specific provider, handling rotation and fallbacks
  * For use server-side only
  */
@@ -546,7 +564,8 @@ export function getApiKey(provider: string, model: string, userProvidedKey?: str
   const hasUserKey = !!userProvidedKey
 
   // Ollama models don't require API keys - they run locally
-  const isOllamaModel = provider === 'ollama' || useOllamaStore.getState().models.includes(model)
+  const isOllamaModel =
+    provider === 'ollama' || useProvidersStore.getState().providers.ollama.models.includes(model)
   if (isOllamaModel) {
     return 'empty' // Ollama uses 'empty' as a placeholder API key
   }
@@ -908,6 +927,7 @@ export function prepareToolExecution(
   llmArgs: Record<string, any>,
   request: {
     workflowId?: string
+    workspaceId?: string // Add workspaceId for MCP tools
     chatId?: string
     userId?: string
     environmentVariables?: Record<string, any>
@@ -932,6 +952,7 @@ export function prepareToolExecution(
       ? {
           _context: {
             workflowId: request.workflowId,
+            ...(request.workspaceId ? { workspaceId: request.workspaceId } : {}),
             ...(request.chatId ? { chatId: request.chatId } : {}),
             ...(request.userId ? { userId: request.userId } : {}),
           },

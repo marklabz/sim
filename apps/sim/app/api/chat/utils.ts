@@ -3,16 +3,17 @@ import { type NextRequest, NextResponse } from 'next/server'
 import { v4 as uuidv4 } from 'uuid'
 import { checkServerSideUsageLimits } from '@/lib/billing'
 import { isDev } from '@/lib/environment'
+import { getPersonalAndWorkspaceEnv } from '@/lib/environment/utils'
 import { createLogger } from '@/lib/logs/console/logger'
 import { LoggingSession } from '@/lib/logs/execution/logging-session'
 import { buildTraceSpans } from '@/lib/logs/execution/trace-spans/trace-spans'
 import { hasAdminPermission } from '@/lib/permissions/utils'
 import { processStreamingBlockLogs } from '@/lib/tokenization'
 import { getEmailDomain } from '@/lib/urls/utils'
-import { decryptSecret } from '@/lib/utils'
+import { decryptSecret, generateRequestId } from '@/lib/utils'
 import { getBlock } from '@/blocks'
 import { db } from '@/db'
-import { chat, environment as envTable, userStats, workflow } from '@/db/schema'
+import { chat, userStats, workflow } from '@/db/schema'
 import { Executor } from '@/executor'
 import type { BlockLog, ExecutionResult } from '@/executor/types'
 import { Serializer } from '@/serializer'
@@ -302,7 +303,7 @@ export async function executeWorkflowForChat(
   input: string,
   conversationId?: string
 ): Promise<any> {
-  const requestId = crypto.randomUUID().slice(0, 8)
+  const requestId = generateRequestId()
 
   logger.debug(
     `[${requestId}] Executing workflow for chat: ${chatId}${
@@ -453,18 +454,21 @@ export async function executeWorkflowForChat(
     {} as Record<string, Record<string, any>>
   )
 
-  // Get user environment variables for this workflow
+  // Get user environment variables with workspace precedence
   let envVars: Record<string, string> = {}
   try {
-    const envResult = await db
-      .select()
-      .from(envTable)
-      .where(eq(envTable.userId, deployment.userId))
+    const wfWorkspaceRow = await db
+      .select({ workspaceId: workflow.workspaceId })
+      .from(workflow)
+      .where(eq(workflow.id, workflowId))
       .limit(1)
 
-    if (envResult.length > 0 && envResult[0].variables) {
-      envVars = envResult[0].variables as Record<string, string>
-    }
+    const workspaceId = wfWorkspaceRow[0]?.workspaceId || undefined
+    const { personalEncrypted, workspaceEncrypted } = await getPersonalAndWorkspaceEnv(
+      deployment.userId,
+      workspaceId
+    )
+    envVars = { ...personalEncrypted, ...workspaceEncrypted }
   } catch (error) {
     logger.warn(`[${requestId}] Could not fetch environment variables:`, error)
   }

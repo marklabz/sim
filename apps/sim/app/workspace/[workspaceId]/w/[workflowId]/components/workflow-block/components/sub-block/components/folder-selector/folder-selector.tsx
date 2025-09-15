@@ -155,7 +155,9 @@ export function FolderSelector({
           if (!accessToken) return null
           const resp = await fetch(
             `https://graph.microsoft.com/v1.0/me/mailFolders/${encodeURIComponent(folderId)}`,
-            { headers: { Authorization: `Bearer ${accessToken}` } }
+            {
+              headers: { Authorization: `Bearer ${accessToken}` },
+            }
           )
           if (!resp.ok) return null
           const folder = await resp.json()
@@ -501,7 +503,7 @@ export function FolderSelector({
                   {credentials.length === 0 && (
                     <CommandGroup>
                       <CommandItem onSelect={handleAddCredential}>
-                        <div className='flex items-center gap-2 text-primary'>
+                        <div className='flex items-center gap-2 text-foreground'>
                           <span>Connect {getProviderName()} account</span>
                         </div>
                       </CommandItem>

@@ -5,7 +5,6 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { getEnv, isTruthy } from '@/lib/env'
 import { isHosted } from '@/lib/environment'
 import { createLogger } from '@/lib/logs/console/logger'
-import { cn } from '@/lib/utils'
 import {
   Account,
   ApiKeys,
@@ -13,6 +12,7 @@ import {
   Credentials,
   EnvironmentVariables,
   General,
+  MCP,
   Privacy,
   SettingsNavigation,
   Subscription,
@@ -40,6 +40,7 @@ type SettingsSection =
   | 'team'
   | 'privacy'
   | 'copilot'
+  | 'mcp'
 
 export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
   const [activeSection, setActiveSection] = useState<SettingsSection>('general')
@@ -47,32 +48,34 @@ export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
   const loadSettings = useGeneralStore((state) => state.loadSettings)
   const { activeOrganization } = useOrganizationStore()
   const hasLoadedInitialData = useRef(false)
+  const hasLoadedGeneral = useRef(false)
   const environmentCloseHandler = useRef<((open: boolean) => void) | null>(null)
+  const credentialsCloseHandler = useRef<((open: boolean) => void) | null>(null)
 
   useEffect(() => {
-    async function loadAllSettings() {
+    async function loadGeneralIfNeeded() {
       if (!open) return
-
-      if (hasLoadedInitialData.current) return
-
+      if (activeSection !== 'general') return
+      if (hasLoadedGeneral.current) return
       setIsLoading(true)
-
       try {
         await loadSettings()
+        hasLoadedGeneral.current = true
         hasLoadedInitialData.current = true
       } catch (error) {
-        logger.error('Error loading settings data:', error)
+        logger.error('Error loading general settings:', error)
       } finally {
         setIsLoading(false)
       }
     }
 
     if (open) {
-      loadAllSettings()
+      void loadGeneralIfNeeded()
     } else {
       hasLoadedInitialData.current = false
+      hasLoadedGeneral.current = false
     }
-  }, [open, loadSettings])
+  }, [open, activeSection, loadSettings])
 
   useEffect(() => {
     const handleOpenSettings = (event: CustomEvent<{ tab: SettingsSection }>) => {
@@ -100,6 +103,8 @@ export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
   const handleDialogOpenChange = (newOpen: boolean) => {
     if (!newOpen && activeSection === 'environment' && environmentCloseHandler.current) {
       environmentCloseHandler.current(newOpen)
+    } else if (!newOpen && activeSection === 'credentials' && credentialsCloseHandler.current) {
+      credentialsCloseHandler.current(newOpen)
     } else {
       onOpenChange(newOpen)
     }
@@ -124,44 +129,66 @@ export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
 
           {/* Content Area */}
           <div className='flex-1 overflow-y-auto'>
-            <div className={cn('h-full', activeSection === 'general' ? 'block' : 'hidden')}>
-              <General />
-            </div>
-            <div className={cn('h-full', activeSection === 'environment' ? 'block' : 'hidden')}>
-              <EnvironmentVariables
-                onOpenChange={onOpenChange}
-                registerCloseHandler={(handler) => {
-                  environmentCloseHandler.current = handler
-                }}
-              />
-            </div>
-            <div className={cn('h-full', activeSection === 'account' ? 'block' : 'hidden')}>
-              <Account onOpenChange={onOpenChange} />
-            </div>
-            <div className={cn('h-full', activeSection === 'credentials' ? 'block' : 'hidden')}>
-              <Credentials onOpenChange={onOpenChange} />
-            </div>
-            <div className={cn('h-full', activeSection === 'apikeys' ? 'block' : 'hidden')}>
-              <ApiKeys onOpenChange={onOpenChange} />
-            </div>
-            {isSubscriptionEnabled && (
-              <div className={cn('h-full', activeSection === 'subscription' ? 'block' : 'hidden')}>
+            {activeSection === 'general' && (
+              <div className='h-full'>
+                <General />
+              </div>
+            )}
+            {activeSection === 'environment' && (
+              <div className='h-full'>
+                <EnvironmentVariables
+                  onOpenChange={onOpenChange}
+                  registerCloseHandler={(handler) => {
+                    environmentCloseHandler.current = handler
+                  }}
+                />
+              </div>
+            )}
+            {activeSection === 'account' && (
+              <div className='h-full'>
+                <Account onOpenChange={onOpenChange} />
+              </div>
+            )}
+            {activeSection === 'credentials' && (
+              <div className='h-full'>
+                <Credentials
+                  onOpenChange={onOpenChange}
+                  registerCloseHandler={(handler) => {
+                    credentialsCloseHandler.current = handler
+                  }}
+                />
+              </div>
+            )}
+            {activeSection === 'apikeys' && (
+              <div className='h-full'>
+                <ApiKeys onOpenChange={onOpenChange} />
+              </div>
+            )}
+            {isSubscriptionEnabled && activeSection === 'subscription' && (
+              <div className='h-full'>
                 <Subscription onOpenChange={onOpenChange} />
               </div>
             )}
-            {isBillingEnabled && (
-              <div className={cn('h-full', activeSection === 'team' ? 'block' : 'hidden')}>
+            {isBillingEnabled && activeSection === 'team' && (
+              <div className='h-full'>
                 <TeamManagement />
               </div>
             )}
-            {isHosted && (
-              <div className={cn('h-full', activeSection === 'copilot' ? 'block' : 'hidden')}>
+            {isHosted && activeSection === 'copilot' && (
+              <div className='h-full'>
                 <Copilot />
               </div>
             )}
-            <div className={cn('h-full', activeSection === 'privacy' ? 'block' : 'hidden')}>
-              <Privacy />
-            </div>
+            {activeSection === 'privacy' && (
+              <div className='h-full'>
+                <Privacy />
+              </div>
+            )}
+            {activeSection === 'mcp' && (
+              <div className='h-full'>
+                <MCP />
+              </div>
+            )}
           </div>
         </div>
       </DialogContent>

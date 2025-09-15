@@ -6,21 +6,19 @@ import {
   getAllModelProviders,
   getBaseModelProviders,
   getHostedModels,
+  getMaxTemperature,
   getProviderIcon,
-  MODELS_TEMP_RANGE_0_1,
-  MODELS_TEMP_RANGE_0_2,
   MODELS_WITH_REASONING_EFFORT,
-  MODELS_WITH_TEMPERATURE_SUPPORT,
   MODELS_WITH_VERBOSITY,
   providers,
+  supportsTemperature,
 } from '@/providers/utils'
 
-// Get current Ollama models dynamically
 const getCurrentOllamaModels = () => {
-  return useOllamaStore.getState().models
+  return useProvidersStore.getState().providers.ollama.models
 }
 
-import { useOllamaStore } from '@/stores/ollama/store'
+import { useProvidersStore } from '@/stores/providers/store'
 import type { ToolResponse } from '@/tools/types'
 
 const logger = createLogger('AgentBlock')
@@ -64,7 +62,7 @@ export const AgentBlock: BlockConfig<AgentResponse> = {
   name: 'Agent',
   description: 'Build an agent',
   longDescription:
-    'Create powerful AI agents using any LLM provider with customizable system prompts and tool integrations.',
+    'The Agent block is a core workflow block that is a wrapper around an LLM. It takes in system/user prompts and calls an LLM provider. It can also make tool calls by directly containing tools inside of its tool input. It can additionally return structured output.',
   docsLink: 'https://docs.sim.ai/blocks/agent',
   category: 'blocks',
   bgColor: 'var(--brand-primary-hover-hex)',
@@ -158,9 +156,11 @@ Create a system prompt appropriately detailed for the request, using clear langu
       placeholder: 'Type or select a model...',
       required: true,
       options: () => {
-        const ollamaModels = useOllamaStore.getState().models
+        const providersState = useProvidersStore.getState()
+        const ollamaModels = providersState.providers.ollama.models
+        const openrouterModels = providersState.providers.openrouter.models
         const baseModels = Object.keys(getBaseModelProviders())
-        const allModels = [...baseModels, ...ollamaModels]
+        const allModels = Array.from(new Set([...baseModels, ...ollamaModels, ...openrouterModels]))
 
         return allModels.map((model) => {
           const icon = getProviderIcon(model)
@@ -175,10 +175,16 @@ Create a system prompt appropriately detailed for the request, using clear langu
       layout: 'half',
       min: 0,
       max: 1,
-      condition: {
+      defaultValue: 0.5,
+      condition: () => ({
         field: 'model',
-        value: MODELS_TEMP_RANGE_0_1,
-      },
+        value: (() => {
+          const allModels = Object.keys(getAllModelProviders())
+          return allModels.filter(
+            (model) => supportsTemperature(model) && getMaxTemperature(model) === 1
+          )
+        })(),
+      }),
     },
     {
       id: 'temperature',
@@ -187,30 +193,16 @@ Create a system prompt appropriately detailed for the request, using clear langu
       layout: 'half',
       min: 0,
       max: 2,
-      condition: {
+      defaultValue: 1,
+      condition: () => ({
         field: 'model',
-        value: MODELS_TEMP_RANGE_0_2,
-      },
-    },
-    {
-      id: 'temperature',
-      title: 'Temperature',
-      type: 'slider',
-      layout: 'full',
-      min: 0,
-      max: 2,
-      condition: {
-        field: 'model',
-        value: [...MODELS_TEMP_RANGE_0_1, ...MODELS_TEMP_RANGE_0_2],
-        not: true,
-        and: {
-          field: 'model',
-          value: Object.keys(getBaseModelProviders()).filter(
-            (model) => !MODELS_WITH_TEMPERATURE_SUPPORT.includes(model)
-          ),
-          not: true,
-        },
-      },
+        value: (() => {
+          const allModels = Object.keys(getAllModelProviders())
+          return allModels.filter(
+            (model) => supportsTemperature(model) && getMaxTemperature(model) === 2
+          )
+        })(),
+      }),
     },
     {
       id: 'reasoningEffort',
@@ -299,6 +291,7 @@ Create a system prompt appropriately detailed for the request, using clear langu
       title: 'Tools',
       type: 'tool-input',
       layout: 'full',
+      defaultValue: [],
     },
     {
       id: 'responseFormat',
@@ -432,7 +425,6 @@ Example 3 (Array Input):
               return usageControl !== 'none'
             })
             .map((tool: any) => {
-              // Get the base tool configuration
               const toolConfig = {
                 id:
                   tool.type === 'custom-tool'
@@ -441,8 +433,9 @@ Example 3 (Array Input):
                 name: tool.title,
                 description: tool.type === 'custom-tool' ? tool.schema?.function?.description : '',
                 params: tool.params || {},
-                parameters: tool.type === 'custom-tool' ? tool.schema?.function?.parameters : {}, // We'd need to get actual parameters for non-custom tools
+                parameters: tool.type === 'custom-tool' ? tool.schema?.function?.parameters : {},
                 usageControl: tool.usageControl || 'auto',
+                type: tool.type,
               }
               return toolConfig
             })
@@ -454,13 +447,6 @@ Example 3 (Array Input):
 
           if (filteredOutTools.length > 0) {
             logger.info('Filtered out tools set to none', { tools: filteredOutTools.join(', ') })
-          }
-
-          logger.info('Transformed tools', { tools: transformedTools })
-          if (transformedTools.length === 0) {
-            logger.info('No tools will be passed to the provider after filtering')
-          } else {
-            logger.info('Tools passed to provider', { count: transformedTools.length })
           }
 
           return { ...params, tools: transformedTools }

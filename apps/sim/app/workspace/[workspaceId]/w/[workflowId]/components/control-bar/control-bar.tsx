@@ -12,6 +12,7 @@ import {
   StepForward,
   Store,
   Trash2,
+  Webhook,
   WifiOff,
   X,
 } from 'lucide-react'
@@ -31,6 +32,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui'
 import { useSession } from '@/lib/auth-client'
+import { getEnv, isTruthy } from '@/lib/env'
 import { createLogger } from '@/lib/logs/console/logger'
 import { cn } from '@/lib/utils'
 import { useUserPermissionsContext } from '@/app/workspace/[workspaceId]/providers/workspace-permissions-provider'
@@ -38,6 +40,7 @@ import {
   DeploymentControls,
   ExportControls,
   TemplateModal,
+  WebhookSettings,
 } from '@/app/workspace/[workspaceId]/w/[workflowId]/components/control-bar/components'
 import { useWorkflowExecution } from '@/app/workspace/[workspaceId]/w/[workflowId]/hooks/use-workflow-execution'
 import {
@@ -45,6 +48,7 @@ import {
   useKeyboardShortcuts,
 } from '@/app/workspace/[workspaceId]/w/hooks/use-keyboard-shortcuts'
 import { useFolderStore } from '@/stores/folders/store'
+import { useOperationQueueStore } from '@/stores/operation-queue/store'
 import { usePanelStore } from '@/stores/panel/store'
 import { useGeneralStore } from '@/stores/settings/general/store'
 import { useSubscriptionStore } from '@/stores/subscription/store'
@@ -110,6 +114,7 @@ export function ControlBar({ hasValidationErrors = false }: ControlBarProps) {
   const [, forceUpdate] = useState({})
   const [isExpanded, setIsExpanded] = useState(false)
   const [isTemplateModalOpen, setIsTemplateModalOpen] = useState(false)
+  const [isWebhookSettingsOpen, setIsWebhookSettingsOpen] = useState(false)
   const [isAutoLayouting, setIsAutoLayouting] = useState(false)
 
   // Delete workflow state - grouped for better organization
@@ -258,17 +263,23 @@ export function ControlBar({ hasValidationErrors = false }: ControlBarProps) {
 
   // Get current store state for change detection
   const currentBlocks = useWorkflowStore((state) => state.blocks)
+  const currentEdges = useWorkflowStore((state) => state.edges)
   const subBlockValues = useSubBlockStore((state) =>
     activeWorkflowId ? state.workflowValues[activeWorkflowId] : null
   )
 
   useEffect(() => {
+    // Avoid off-by-one false positives: wait until operation queue is idle
+    const { operations, isProcessing } = useOperationQueueStore.getState()
+    const hasPendingOps =
+      isProcessing || operations.some((op) => op.status === 'pending' || op.status === 'processing')
+
     if (!activeWorkflowId || !deployedState) {
       setChangeDetected(false)
       return
     }
 
-    if (isLoadingDeployedState) {
+    if (isLoadingDeployedState || hasPendingOps) {
       return
     }
 
@@ -291,7 +302,16 @@ export function ControlBar({ hasValidationErrors = false }: ControlBarProps) {
     }
 
     checkForChanges()
-  }, [activeWorkflowId, deployedState, currentBlocks, subBlockValues, isLoadingDeployedState])
+  }, [
+    activeWorkflowId,
+    deployedState,
+    currentBlocks,
+    currentEdges,
+    subBlockValues,
+    isLoadingDeployedState,
+    useOperationQueueStore.getState().isProcessing,
+    useOperationQueueStore.getState().operations.length,
+  ])
 
   useEffect(() => {
     if (session?.user?.id && !isRegistryLoading) {
@@ -320,23 +340,23 @@ export function ControlBar({ hasValidationErrors = false }: ControlBarProps) {
     }
 
     try {
-      // Use subscription store to get usage data
-      const { getUsage, refresh } = useSubscriptionStore.getState()
-
-      // Force refresh if requested
-      if (forceRefresh) {
-        await refresh()
+      // Primary: call server-side usage check to mirror backend enforcement
+      const res = await fetch('/api/usage?context=user', { cache: 'no-store' })
+      if (res.ok) {
+        const payload = await res.json()
+        const usage = payload?.data
+        // Update cache
+        usageDataCache = { data: usage, timestamp: now, expirationMs: usageDataCache.expirationMs }
+        return usage
       }
 
+      // Fallback: use store if API not available
+      const { getUsage, refresh } = useSubscriptionStore.getState()
+      if (forceRefresh) await refresh()
       const usage = getUsage()
 
       // Update cache
-      usageDataCache = {
-        data: usage,
-        timestamp: now,
-        expirationMs: usageDataCache.expirationMs,
-      }
-
+      usageDataCache = { data: usage, timestamp: now, expirationMs: usageDataCache.expirationMs }
       return usage
     } catch (error) {
       logger.error('Error checking usage limits:', { error })
@@ -688,6 +708,41 @@ export function ControlBar({ hasValidationErrors = false }: ControlBarProps) {
       userPermissions={userPermissions}
     />
   )
+
+  /**
+   * Render webhook settings button
+   */
+  const renderWebhookButton = () => {
+    // Only show webhook button if Trigger.dev is enabled
+    const isTriggerEnabled = isTruthy(getEnv('NEXT_PUBLIC_TRIGGER_DEV_ENABLED'))
+    if (!isTriggerEnabled) return null
+
+    const canEdit = userPermissions.canEdit
+    const isDisabled = !canEdit
+
+    const getTooltipText = () => {
+      if (!canEdit) return 'Admin permission required to configure webhooks'
+      return 'Configure webhook notifications'
+    }
+
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            variant='outline'
+            size='icon'
+            disabled={isDisabled}
+            onClick={() => setIsWebhookSettingsOpen(true)}
+            className='h-12 w-12 rounded-[11px] border bg-card text-card-foreground shadow-xs hover:bg-secondary'
+          >
+            <Webhook className='h-5 w-5' />
+            <span className='sr-only'>Webhook Settings</span>
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>{getTooltipText()}</TooltipContent>
+      </Tooltip>
+    )
+  }
 
   /**
    * Render workflow duplicate button
@@ -1101,21 +1156,11 @@ export function ControlBar({ hasValidationErrors = false }: ControlBarProps) {
    * Get workflows in the exact order they appear in the sidebar
    */
   const getSidebarOrderedWorkflows = () => {
-    // Get and sort regular workflows by last modified (newest first)
+    // Get and sort regular workflows by creation date (newest first) for stable ordering
     const regularWorkflows = Object.values(workflows)
       .filter((workflow) => workflow.workspaceId === workspaceId)
       .filter((workflow) => workflow.marketplaceData?.status !== 'temp')
-      .sort((a, b) => {
-        const dateA =
-          a.lastModified instanceof Date
-            ? a.lastModified.getTime()
-            : new Date(a.lastModified).getTime()
-        const dateB =
-          b.lastModified instanceof Date
-            ? b.lastModified.getTime()
-            : new Date(b.lastModified).getTime()
-        return dateB - dateA
-      })
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
 
     // Group workflows by folder
     const workflowsByFolder = regularWorkflows.reduce(
@@ -1209,6 +1254,7 @@ export function ControlBar({ hasValidationErrors = false }: ControlBarProps) {
     <div className='fixed top-4 right-4 z-20 flex items-center gap-1'>
       {renderDisconnectionNotice()}
       {renderToggleButton()}
+      {isExpanded && renderWebhookButton()}
       {isExpanded && <ExportControls />}
       {isExpanded && renderAutoLayoutButton()}
       {isExpanded && renderPublishButton()}
@@ -1223,6 +1269,15 @@ export function ControlBar({ hasValidationErrors = false }: ControlBarProps) {
         <TemplateModal
           open={isTemplateModalOpen}
           onOpenChange={setIsTemplateModalOpen}
+          workflowId={activeWorkflowId}
+        />
+      )}
+
+      {/* Webhook Settings */}
+      {activeWorkflowId && (
+        <WebhookSettings
+          open={isWebhookSettingsOpen}
+          onOpenChange={setIsWebhookSettingsOpen}
           workflowId={activeWorkflowId}
         />
       )}

@@ -159,8 +159,7 @@ bun run dev:sockets
 Copilot is a Sim-managed service. To use Copilot on a self-hosted instance:
 
 - Go to https://sim.ai → Settings → Copilot and generate a Copilot API key
-- Set `COPILOT_API_KEY` in your self-hosted environment to that value
-- Host Sim on a publicly available DNS and set NEXT_PUBLIC_APP_URL and BETTER_AUTH_URL to that value ([ngrok](https://ngrok.com/))
+- Set `COPILOT_API_KEY` environment variable in your self-hosted apps/sim/.env file to that value
 
 ## Tech Stack
 
@@ -175,6 +174,7 @@ Copilot is a Sim-managed service. To use Copilot on a self-hosted instance:
 - **Monorepo**: [Turborepo](https://turborepo.org/)
 - **Realtime**: [Socket.io](https://socket.io/)
 - **Background Jobs**: [Trigger.dev](https://trigger.dev/)
+- **Remote Code Execution**: [E2B](https://www.e2b.dev/)
 
 ## Contributing
 

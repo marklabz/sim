@@ -16,6 +16,7 @@ const logger = createLogger('Credentials')
 
 interface CredentialsProps {
   onOpenChange?: (open: boolean) => void
+  registerCloseHandler?: (handler: (open: boolean) => void) => void
 }
 
 interface ServiceInfo extends OAuthServiceConfig {
@@ -24,7 +25,7 @@ interface ServiceInfo extends OAuthServiceConfig {
   accounts?: { id: string; name: string }[]
 }
 
-export function Credentials({ onOpenChange }: CredentialsProps) {
+export function Credentials({ onOpenChange, registerCloseHandler }: CredentialsProps) {
   const router = useRouter()
   const searchParams = useSearchParams()
   const { data: session } = useSession()
@@ -39,6 +40,8 @@ export function Credentials({ onOpenChange }: CredentialsProps) {
   const [_pendingScopes, setPendingScopes] = useState<string[]>([])
   const [authSuccess, setAuthSuccess] = useState(false)
   const [showActionRequired, setShowActionRequired] = useState(false)
+  const prevConnectedIdsRef = useRef<Set<string>>(new Set())
+  const connectionAddedRef = useRef<boolean>(false)
 
   // Define available services from our standardized OAuth providers
   const defineServices = (): ServiceInfo[] => {
@@ -186,6 +189,43 @@ export function Credentials({ onOpenChange }: CredentialsProps) {
     }
   }, [userId])
 
+  // Track when a new connection is added compared to previous render
+  useEffect(() => {
+    try {
+      const currentConnected = new Set<string>()
+      services.forEach((svc) => {
+        if (svc.isConnected) currentConnected.add(svc.id)
+      })
+      // Detect new connections by comparing to previous connected set
+      for (const id of currentConnected) {
+        if (!prevConnectedIdsRef.current.has(id)) {
+          connectionAddedRef.current = true
+          break
+        }
+      }
+      prevConnectedIdsRef.current = currentConnected
+    } catch {}
+  }, [services])
+
+  // On mount, register a close handler so the parent modal can delegate close events here
+  useEffect(() => {
+    if (!registerCloseHandler) return
+    const handle = (open: boolean) => {
+      if (open) return
+      try {
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(
+            new CustomEvent('oauth-integration-closed', {
+              detail: { success: connectionAddedRef.current === true },
+            })
+          )
+        }
+      } catch {}
+      onOpenChange?.(open)
+    }
+    registerCloseHandler(handle)
+  }, [registerCloseHandler, onOpenChange])
+
   // Handle connect button click
   const handleConnect = async (service: ServiceInfo) => {
     try {
@@ -331,19 +371,19 @@ export function Credentials({ onOpenChange }: CredentialsProps) {
           {pendingService && showActionRequired && (
             <div className='flex items-start gap-3 rounded-[8px] border border-primary/20 bg-primary/5 p-5 text-sm shadow-sm'>
               <div className='mt-0.5 min-w-5'>
-                <ExternalLink className='h-4 w-4 text-primary' />
+                <ExternalLink className='h-4 w-4 text-muted-foreground' />
               </div>
               <div className='flex flex-1 flex-col'>
                 <p className='text-muted-foreground'>
-                  <span className='font-medium text-primary'>Action Required:</span> Please connect
-                  your account to enable the requested features. The required service is highlighted
-                  below.
+                  <span className='font-medium text-foreground'>Action Required:</span> Please
+                  connect your account to enable the requested features. The required service is
+                  highlighted below.
                 </p>
                 <Button
                   variant='outline'
                   size='sm'
                   onClick={scrollToHighlightedService}
-                  className='mt-3 flex h-8 items-center gap-1.5 self-start border-primary/20 px-3 font-medium text-primary text-sm transition-colors hover:border-primary hover:bg-primary/10 hover:text-primary'
+                  className='mt-3 flex h-8 items-center gap-1.5 self-start border-primary/20 px-3 font-medium text-muted-foreground text-sm transition-colors hover:border-primary hover:bg-primary/10 hover:text-muted-foreground'
                 >
                   <span>Go to service</span>
                   <ChevronDown className='h-3.5 w-3.5' />

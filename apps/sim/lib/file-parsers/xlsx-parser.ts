@@ -1,6 +1,7 @@
 import { existsSync } from 'fs'
 import * as XLSX from 'xlsx'
 import type { FileParseResult, FileParser } from '@/lib/file-parsers/types'
+import { sanitizeTextForUTF8 } from '@/lib/file-parsers/utils'
 import { createLogger } from '@/lib/logs/console/logger'
 
 const logger = createLogger('XlsxParser')
@@ -8,19 +9,16 @@ const logger = createLogger('XlsxParser')
 export class XlsxParser implements FileParser {
   async parseFile(filePath: string): Promise<FileParseResult> {
     try {
-      // Validate input
       if (!filePath) {
         throw new Error('No file path provided')
       }
 
-      // Check if file exists
       if (!existsSync(filePath)) {
         throw new Error(`File not found: ${filePath}`)
       }
 
       logger.info(`Parsing XLSX file: ${filePath}`)
 
-      // Read the workbook
       const workbook = XLSX.readFile(filePath)
       return this.processWorkbook(workbook)
     } catch (error) {
@@ -37,7 +35,6 @@ export class XlsxParser implements FileParser {
         throw new Error('Empty buffer provided')
       }
 
-      // Read the workbook from buffer
       const workbook = XLSX.read(buffer, { type: 'buffer' })
       return this.processWorkbook(workbook)
     } catch (error) {
@@ -52,30 +49,26 @@ export class XlsxParser implements FileParser {
     let content = ''
     let totalRows = 0
 
-    // Process each worksheet
     for (const sheetName of sheetNames) {
       const worksheet = workbook.Sheets[sheetName]
 
-      // Convert to array of objects
       const sheetData = XLSX.utils.sheet_to_json(worksheet, { header: 1 })
       sheets[sheetName] = sheetData
       totalRows += sheetData.length
 
-      // Add sheet content to the overall content string
-      content += `Sheet: ${sheetName}\n`
-      content += `=${'='.repeat(sheetName.length + 6)}\n\n`
+      const cleanSheetName = sanitizeTextForUTF8(sheetName)
+      content += `Sheet: ${cleanSheetName}\n`
+      content += `=${'='.repeat(cleanSheetName.length + 6)}\n\n`
 
       if (sheetData.length > 0) {
-        // Process each row
         sheetData.forEach((row: unknown, rowIndex: number) => {
           if (Array.isArray(row) && row.length > 0) {
-            // Convert row to string, handling undefined/null values
             const rowString = row
               .map((cell) => {
                 if (cell === null || cell === undefined) {
                   return ''
                 }
-                return String(cell)
+                return sanitizeTextForUTF8(String(cell))
               })
               .join('\t')
 
@@ -91,8 +84,10 @@ export class XlsxParser implements FileParser {
 
     logger.info(`XLSX parsing completed: ${sheetNames.length} sheets, ${totalRows} total rows`)
 
+    const cleanContent = sanitizeTextForUTF8(content).trim()
+
     return {
-      content: content.trim(),
+      content: cleanContent,
       metadata: {
         sheetCount: sheetNames.length,
         sheetNames: sheetNames,

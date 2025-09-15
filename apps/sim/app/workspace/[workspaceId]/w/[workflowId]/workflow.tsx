@@ -36,10 +36,9 @@ import { useStreamCleanup } from '@/hooks/use-stream-cleanup'
 import { useWorkspacePermissions } from '@/hooks/use-workspace-permissions'
 import { useCopilotStore } from '@/stores/copilot/store'
 import { useExecutionStore } from '@/stores/execution/store'
-import { useVariablesStore } from '@/stores/panel/variables/store'
 import { useGeneralStore } from '@/stores/settings/general/store'
 import { useWorkflowDiffStore } from '@/stores/workflow-diff/store'
-import { useWorkflowRegistry } from '@/stores/workflows/registry/store'
+import { hasWorkflowsInitiallyLoaded, useWorkflowRegistry } from '@/stores/workflows/registry/store'
 import { useWorkflowStore } from '@/stores/workflows/workflow/store'
 
 const logger = createLogger('Workflow')
@@ -177,8 +176,6 @@ const WorkflowContent = React.memo(() => {
     collaborativeUpdateParentId: updateParentId,
     collaborativeSetSubblockValue,
   } = useCollaborativeWorkflow()
-
-  const { resetLoaded: resetVariablesLoaded } = useVariablesStore()
 
   // Execution and debug mode state
   const { activeBlockIds, pendingBlocks } = useExecutionStore()
@@ -552,16 +549,14 @@ const WorkflowContent = React.memo(() => {
 
       // Create a new block with a unique ID
       const id = crypto.randomUUID()
-      const name = `${blockConfig.name} ${
-        Object.values(blocks).filter((b) => b.type === type).length + 1
-      }`
+      const name = `${blockConfig.name} ${Object.values(blocks).filter((b) => b.type === type).length + 1}`
 
       // Auto-connect logic
       const isAutoConnectEnabled = useGeneralStore.getState().isAutoConnectEnabled
       let autoConnectEdge
       if (isAutoConnectEnabled && type !== 'starter') {
         const closestBlock = findClosestOutput(centerPosition)
-        logger.info('🎯 Closest block found:', closestBlock)
+        logger.info('Closest block found:', closestBlock)
         if (closestBlock) {
           // Get appropriate source handle
           const sourceHandle = determineSourceHandle(closestBlock)
@@ -574,7 +569,7 @@ const WorkflowContent = React.memo(() => {
             targetHandle: 'target',
             type: 'workflowEdge',
           }
-          logger.info('✅ Auto-connect edge created:', autoConnectEdge)
+          logger.info('Auto-connect edge created:', autoConnectEdge)
         }
       }
 
@@ -872,50 +867,46 @@ const WorkflowContent = React.memo(() => {
     [project, isPointInLoopNodeWrapper, getNodes]
   )
 
-  // Track when workflow is fully ready for rendering
+  // Initialize workflow when it exists in registry and isn't active
   useEffect(() => {
     const currentId = params.workflowId as string
+    if (!currentId || !workflows[currentId]) return
 
-    // Reset workflow ready state when workflow changes
     if (activeWorkflowId !== currentId) {
-      setIsWorkflowReady(false)
-      return
+      // Clear diff and set as active
+      const { clearDiff } = useWorkflowDiffStore.getState()
+      clearDiff()
+      setActiveWorkflow(currentId)
     }
+  }, [params.workflowId, workflows, activeWorkflowId, setActiveWorkflow])
 
-    // Check if we have the necessary data to render the workflow
-    const hasActiveWorkflow = activeWorkflowId === currentId
-    const hasWorkflowInRegistry = Boolean(workflows[currentId])
-    const isNotLoading = !isLoading
+  // Track when workflow is ready for rendering
+  useEffect(() => {
+    const currentId = params.workflowId as string
 
     // Workflow is ready when:
     // 1. We have an active workflow that matches the URL
     // 2. The workflow exists in the registry
     // 3. Workflows are not currently loading
-    if (hasActiveWorkflow && hasWorkflowInRegistry && isNotLoading) {
-      // Add a small delay to ensure blocks state has settled
-      const timeoutId = setTimeout(() => {
-        setIsWorkflowReady(true)
-      }, 100)
+    const shouldBeReady =
+      activeWorkflowId === currentId && Boolean(workflows[currentId]) && !isLoading
 
-      return () => clearTimeout(timeoutId)
-    }
-    setIsWorkflowReady(false)
+    setIsWorkflowReady(shouldBeReady)
   }, [activeWorkflowId, params.workflowId, workflows, isLoading])
 
-  // Init workflow
+  // Handle navigation and validation
   useEffect(() => {
     const validateAndNavigate = async () => {
       const workflowIds = Object.keys(workflows)
       const currentId = params.workflowId as string
 
-      // Wait for both initialization and workflow loading to complete
-      if (isLoading) {
-        logger.info('Workflows still loading, waiting...')
+      // Wait for initial load to complete before making navigation decisions
+      if (!hasWorkflowsInitiallyLoaded() || isLoading) {
         return
       }
 
-      // If no workflows exist, redirect to workspace root to let server handle workflow creation
-      if (workflowIds.length === 0 && !isLoading) {
+      // If no workflows exist after loading, redirect to workspace root
+      if (workflowIds.length === 0) {
         logger.info('No workflows found, redirecting to workspace root')
         router.replace(`/workspace/${workspaceId}/w`)
         return
@@ -950,35 +941,10 @@ const WorkflowContent = React.memo(() => {
         router.replace(`/workspace/${currentWorkflow.workspaceId}/w/${currentId}`)
         return
       }
-
-      // Get current active workflow state
-      const { activeWorkflowId } = useWorkflowRegistry.getState()
-
-      if (activeWorkflowId !== currentId) {
-        // Only reset variables when actually switching workflows
-        resetVariablesLoaded()
-
-        // Clear workflow diff store when switching workflows
-        const { clearDiff } = useWorkflowDiffStore.getState()
-        clearDiff()
-
-        setActiveWorkflow(currentId)
-      } else {
-        // Don't reset variables cache if we're not actually switching workflows
-        setActiveWorkflow(currentId)
-      }
     }
 
     validateAndNavigate()
-  }, [
-    params.workflowId,
-    workflows,
-    isLoading,
-    setActiveWorkflow,
-    createWorkflow,
-    router,
-    resetVariablesLoaded,
-  ])
+  }, [params.workflowId, workflows, isLoading, workspaceId, router])
 
   // Transform blocks and loops into ReactFlow nodes
   const nodes = useMemo(() => {

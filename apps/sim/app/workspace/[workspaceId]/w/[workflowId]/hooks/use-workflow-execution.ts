@@ -7,7 +7,7 @@ import { getBlock } from '@/blocks'
 import type { BlockOutput } from '@/blocks/types'
 import { Executor } from '@/executor'
 import type { BlockLog, ExecutionResult, StreamingExecution } from '@/executor/types'
-import { Serializer } from '@/serializer'
+import { Serializer, WorkflowValidationError } from '@/serializer'
 import type { SerializedWorkflow } from '@/serializer/types'
 import { useExecutionStore } from '@/stores/execution/store'
 import { useConsoleStore } from '@/stores/panel/console/store'
@@ -16,6 +16,7 @@ import { useEnvironmentStore } from '@/stores/settings/environment/store'
 import { useGeneralStore } from '@/stores/settings/general/store'
 import { useWorkflowRegistry } from '@/stores/workflows/registry/store'
 import { mergeSubblockState } from '@/stores/workflows/utils'
+import { generateLoopBlocks, generateParallelBlocks } from '@/stores/workflows/workflow/utils'
 import { useCurrentWorkflow } from './use-current-workflow'
 
 const logger = createLogger('useWorkflowExecution')
@@ -47,7 +48,7 @@ export function useWorkflowExecution() {
   const currentWorkflow = useCurrentWorkflow()
   const { activeWorkflowId, workflows } = useWorkflowRegistry()
   const { toggleConsole } = useConsoleStore()
-  const { getAllVariables } = useEnvironmentStore()
+  const { getAllVariables, loadWorkspaceEnvironment } = useEnvironmentStore()
   const { isDebugModeEnabled } = useGeneralStore()
   const { getVariablesByWorkflowId, variables } = useVariablesStore()
   const {
@@ -488,7 +489,7 @@ export function useWorkflowExecution() {
         }
         return result
       } catch (error: any) {
-        const errorResult = handleExecutionError(error)
+        const errorResult = handleExecutionError(error, { executionId })
         persistLogs(executionId, errorResult).catch((err) => {
           logger.error('Error persisting logs:', { error: err })
         })
@@ -500,6 +501,7 @@ export function useWorkflowExecution() {
       currentWorkflow,
       toggleConsole,
       getAllVariables,
+      loadWorkspaceEnvironment,
       getVariablesByWorkflowId,
       isDebugModeEnabled,
       setIsExecuting,
@@ -517,12 +519,7 @@ export function useWorkflowExecution() {
     executionId?: string
   ): Promise<ExecutionResult | StreamingExecution> => {
     // Use currentWorkflow but check if we're in diff mode
-    const {
-      blocks: workflowBlocks,
-      edges: workflowEdges,
-      loops: workflowLoops,
-      parallels: workflowParallels,
-    } = currentWorkflow
+    const { blocks: workflowBlocks, edges: workflowEdges } = currentWorkflow
 
     // Filter out blocks without type (these are layout-only blocks)
     const validBlocks = Object.entries(workflowBlocks).reduce(
@@ -598,15 +595,32 @@ export function useWorkflowExecution() {
       {} as Record<string, Record<string, any>>
     )
 
-    // Get environment variables
-    const envVars = getAllVariables()
-    const envVarValues = Object.entries(envVars).reduce(
+    // Get workspaceId from workflow metadata
+    const workspaceId = activeWorkflowId ? workflows[activeWorkflowId]?.workspaceId : undefined
+
+    // Get environment variables with workspace precedence
+    const personalEnvVars = getAllVariables()
+    const personalEnvValues = Object.entries(personalEnvVars).reduce(
       (acc, [key, variable]) => {
         acc[key] = variable.value
         return acc
       },
       {} as Record<string, string>
     )
+
+    // Load workspace environment variables if workspaceId exists
+    let workspaceEnvValues: Record<string, string> = {}
+    if (workspaceId) {
+      try {
+        const workspaceData = await loadWorkspaceEnvironment(workspaceId)
+        workspaceEnvValues = workspaceData.workspace || {}
+      } catch (error) {
+        logger.warn('Failed to load workspace environment variables:', error)
+      }
+    }
+
+    // Merge with workspace taking precedence over personal
+    const envVarValues = { ...personalEnvValues, ...workspaceEnvValues }
 
     // Get workflow variables
     const workflowVars = activeWorkflowId ? getVariablesByWorkflowId(activeWorkflowId) : []
@@ -628,12 +642,17 @@ export function useWorkflowExecution() {
       (edge) => !triggerBlockIds.includes(edge.source) && !triggerBlockIds.includes(edge.target)
     )
 
-    // Create serialized workflow with filtered blocks and edges
+    // Derive subflows from the current filtered graph to avoid stale state
+    const runtimeLoops = generateLoopBlocks(filteredStates)
+    const runtimeParallels = generateParallelBlocks(filteredStates)
+
+    // Create serialized workflow with validation enabled
     const workflow = new Serializer().serializeWorkflow(
       filteredStates,
       filteredEdges,
-      workflowLoops,
-      workflowParallels
+      runtimeLoops,
+      runtimeParallels,
+      true
     )
 
     // If this is a chat execution, get the selected outputs
@@ -643,9 +662,6 @@ export function useWorkflowExecution() {
       const chatStore = await import('@/stores/panel/chat/store').then((mod) => mod.useChatStore)
       selectedOutputIds = chatStore.getState().getSelectedWorkflowOutput(activeWorkflowId)
     }
-
-    // Get workspaceId from workflow metadata
-    const workspaceId = activeWorkflowId ? workflows[activeWorkflowId]?.workspaceId : undefined
 
     // Create executor options
     const executorOptions: ExecutorOptions = {
@@ -675,7 +691,7 @@ export function useWorkflowExecution() {
     return newExecutor.execute(activeWorkflowId || '')
   }
 
-  const handleExecutionError = (error: any) => {
+  const handleExecutionError = (error: any, options?: { executionId?: string }) => {
     let errorMessage = 'Unknown error'
     if (error instanceof Error) {
       errorMessage = error.message || `Error: ${String(error)}`
@@ -706,6 +722,36 @@ export function useWorkflowExecution() {
 
     if (errorMessage === 'undefined (undefined)') {
       errorMessage = 'API request failed - no specific error details available'
+    }
+
+    // If we failed before creating an executor (e.g., serializer validation), add a console entry
+    if (!executor) {
+      try {
+        // Prefer attributing to specific subflow if we have a structured error
+        let blockId = 'serialization'
+        let blockName = 'Serialization'
+        let blockType = 'serializer'
+        if (error instanceof WorkflowValidationError) {
+          blockId = error.blockId || blockId
+          blockName = error.blockName || blockName
+          blockType = error.blockType || blockType
+        }
+
+        useConsoleStore.getState().addConsole({
+          input: {},
+          output: {},
+          success: false,
+          error: errorMessage,
+          durationMs: 0,
+          startedAt: new Date().toISOString(),
+          endedAt: new Date().toISOString(),
+          workflowId: activeWorkflowId || '',
+          blockId,
+          executionId: options?.executionId,
+          blockName,
+          blockType,
+        })
+      } catch {}
     }
 
     const errorResult: ExecutionResult = {

@@ -99,6 +99,7 @@ describe('Copilot Chat API Route', () => {
 
     vi.doMock('@/lib/utils', () => ({
       getRotatingApiKey: mockGetRotatingApiKey,
+      generateRequestId: vi.fn(() => 'test-request-id'),
     }))
 
     vi.doMock('@/lib/env', () => ({
@@ -224,9 +225,9 @@ describe('Copilot Chat API Route', () => {
             stream: true,
             streamToolCalls: true,
             mode: 'agent',
-            provider: 'openai',
+            messageId: 'mock-uuid-1234-5678',
             depth: 0,
-            origin: 'http://localhost:3000',
+            chatId: 'chat-123',
           }),
         })
       )
@@ -288,9 +289,9 @@ describe('Copilot Chat API Route', () => {
             stream: true,
             streamToolCalls: true,
             mode: 'agent',
-            provider: 'openai',
+            messageId: 'mock-uuid-1234-5678',
             depth: 0,
-            origin: 'http://localhost:3000',
+            chatId: 'chat-123',
           }),
         })
       )
@@ -300,7 +301,6 @@ describe('Copilot Chat API Route', () => {
       const authMocks = mockAuth()
       authMocks.setAuthenticated()
 
-      // Mock new chat creation
       const newChat = {
         id: 'chat-123',
         userId: 'user-123',
@@ -308,8 +308,6 @@ describe('Copilot Chat API Route', () => {
         messages: [],
       }
       mockReturning.mockResolvedValue([newChat])
-
-      // Mock sim agent response
 
       ;(global.fetch as any).mockResolvedValue({
         ok: true,
@@ -344,9 +342,9 @@ describe('Copilot Chat API Route', () => {
             stream: true,
             streamToolCalls: true,
             mode: 'agent',
-            provider: 'openai',
+            messageId: 'mock-uuid-1234-5678',
             depth: 0,
-            origin: 'http://localhost:3000',
+            chatId: 'chat-123',
           }),
         })
       )
@@ -356,10 +354,7 @@ describe('Copilot Chat API Route', () => {
       const authMocks = mockAuth()
       authMocks.setAuthenticated()
 
-      // Mock new chat creation
       mockReturning.mockResolvedValue([{ id: 'chat-123', messages: [] }])
-
-      // Mock sim agent error
 
       ;(global.fetch as any).mockResolvedValue({
         ok: false,
@@ -406,10 +401,7 @@ describe('Copilot Chat API Route', () => {
       const authMocks = mockAuth()
       authMocks.setAuthenticated()
 
-      // Mock new chat creation
       mockReturning.mockResolvedValue([{ id: 'chat-123', messages: [] }])
-
-      // Mock sim agent response
 
       ;(global.fetch as any).mockResolvedValue({
         ok: true,
@@ -440,9 +432,9 @@ describe('Copilot Chat API Route', () => {
             stream: true,
             streamToolCalls: true,
             mode: 'ask',
-            provider: 'openai',
+            messageId: 'mock-uuid-1234-5678',
             depth: 0,
-            origin: 'http://localhost:3000',
+            chatId: 'chat-123',
           }),
         })
       )

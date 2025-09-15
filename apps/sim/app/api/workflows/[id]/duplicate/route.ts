@@ -1,12 +1,13 @@
-import crypto from 'crypto'
 import { eq } from 'drizzle-orm'
 import { type NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { getSession } from '@/lib/auth'
 import { createLogger } from '@/lib/logs/console/logger'
 import { getUserEntityPermissions } from '@/lib/permissions/utils'
+import { generateRequestId } from '@/lib/utils'
 import { db } from '@/db'
 import { workflow, workflowBlocks, workflowEdges, workflowSubflows } from '@/db/schema'
+import type { Variable } from '@/stores/panel/variables/types'
 import type { LoopConfig, ParallelConfig } from '@/stores/workflows/workflow/types'
 
 const logger = createLogger('WorkflowDuplicateAPI')
@@ -22,7 +23,7 @@ const DuplicateRequestSchema = z.object({
 // POST /api/workflows/[id]/duplicate - Duplicate a workflow with all its blocks, edges, and subflows
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id: sourceWorkflowId } = await params
-  const requestId = crypto.randomUUID().slice(0, 8)
+  const requestId = generateRequestId()
   const startTime = Date.now()
 
   const session = await getSession()
@@ -97,7 +98,20 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         isDeployed: false,
         collaborators: [],
         runCount: 0,
-        variables: source.variables || {},
+        // Duplicate variables with new IDs and new workflowId
+        variables: (() => {
+          const sourceVars = (source.variables as Record<string, Variable>) || {}
+          const remapped: Record<string, Variable> = {}
+          for (const [, variable] of Object.entries(sourceVars) as [string, Variable][]) {
+            const newVarId = crypto.randomUUID()
+            remapped[newVarId] = {
+              ...variable,
+              id: newVarId,
+              workflowId: newWorkflowId,
+            }
+          }
+          return remapped
+        })(),
         isPublished: false,
         marketplaceData: null,
       })

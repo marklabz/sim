@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server'
 import { isDev } from '@/lib/environment'
 import { createLogger } from '@/lib/logs/console/logger'
+import { validateProxyUrl } from '@/lib/security/url-validation'
+import { generateRequestId } from '@/lib/utils'
 import { executeTool } from '@/tools'
 import { getTool, validateRequiredParametersAfterMerge } from '@/tools/utils'
 
@@ -73,11 +75,20 @@ const createErrorResponse = (error: any, status = 500, additionalData = {}) => {
 export async function GET(request: Request) {
   const url = new URL(request.url)
   const targetUrl = url.searchParams.get('url')
-  const requestId = crypto.randomUUID().slice(0, 8)
+  const requestId = generateRequestId()
 
   if (!targetUrl) {
     logger.error(`[${requestId}] Missing 'url' parameter`)
     return createErrorResponse("Missing 'url' parameter", 400)
+  }
+
+  const urlValidation = validateProxyUrl(targetUrl)
+  if (!urlValidation.isValid) {
+    logger.warn(`[${requestId}] Blocked proxy request`, {
+      url: targetUrl.substring(0, 100),
+      error: urlValidation.error,
+    })
+    return createErrorResponse(urlValidation.error || 'Invalid URL', 403)
   }
 
   const method = url.searchParams.get('method') || 'GET'
@@ -109,7 +120,6 @@ export async function GET(request: Request) {
   logger.info(`[${requestId}] Proxying ${method} request to: ${targetUrl}`)
 
   try {
-    // Forward the request to the target URL with all specified headers
     const response = await fetch(targetUrl, {
       method: method,
       headers: {
@@ -119,7 +129,6 @@ export async function GET(request: Request) {
       body: body || undefined,
     })
 
-    // Get response data
     const contentType = response.headers.get('content-type') || ''
     let data
 
@@ -129,7 +138,6 @@ export async function GET(request: Request) {
       data = await response.text()
     }
 
-    // For error responses, include a more descriptive error message
     const errorMessage = !response.ok
       ? data && typeof data === 'object' && data.error
         ? `${data.error.message || JSON.stringify(data.error)}`
@@ -140,7 +148,6 @@ export async function GET(request: Request) {
       logger.error(`[${requestId}] External API error: ${response.status} ${response.statusText}`)
     }
 
-    // Return the proxied response
     return formatResponse({
       success: response.ok,
       status: response.status,
@@ -161,12 +168,11 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const requestId = crypto.randomUUID().slice(0, 8)
+  const requestId = generateRequestId()
   const startTime = new Date()
   const startTimeISO = startTime.toISOString()
 
   try {
-    // Parse request body
     let requestBody
     try {
       requestBody = await request.json()
@@ -186,7 +192,6 @@ export async function POST(request: Request) {
 
     logger.info(`[${requestId}] Processing tool: ${toolId}`)
 
-    // Get tool
     const tool = getTool(toolId)
 
     if (!tool) {
@@ -194,7 +199,6 @@ export async function POST(request: Request) {
       throw new Error(`Tool not found: ${toolId}`)
     }
 
-    // Validate the tool and its parameters
     try {
       validateRequiredParametersAfterMerge(toolId, tool, params)
     } catch (validationError) {
@@ -202,7 +206,6 @@ export async function POST(request: Request) {
         error: validationError instanceof Error ? validationError.message : String(validationError),
       })
 
-      // Add timing information even to error responses
       const endTime = new Date()
       const endTimeISO = endTime.toISOString()
       const duration = endTime.getTime() - startTime.getTime()
@@ -214,14 +217,12 @@ export async function POST(request: Request) {
       })
     }
 
-    // Check if tool has file outputs - if so, don't skip post-processing
     const hasFileOutputs =
       tool.outputs &&
       Object.values(tool.outputs).some(
         (output) => output.type === 'file' || output.type === 'file[]'
       )
 
-    // Execute tool
     const result = await executeTool(
       toolId,
       params,

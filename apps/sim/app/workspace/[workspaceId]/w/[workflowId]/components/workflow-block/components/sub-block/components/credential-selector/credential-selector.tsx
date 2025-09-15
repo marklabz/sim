@@ -279,7 +279,10 @@ export function CredentialSelector({
         </PopoverTrigger>
         <PopoverContent className='w-[250px] p-0' align='start'>
           <Command>
-            <CommandInput placeholder='Search credentials...' />
+            <CommandInput
+              placeholder='Search credentials...'
+              className='text-foreground placeholder:text-muted-foreground'
+            />
             <CommandList>
               <CommandEmpty>
                 {isLoading ? (
@@ -316,7 +319,7 @@ export function CredentialSelector({
               {credentials.length === 0 && (
                 <CommandGroup>
                   <CommandItem onSelect={handleAddCredential}>
-                    <div className='flex items-center gap-2 text-primary'>
+                    <div className='flex items-center gap-2 text-foreground'>
                       {getProviderIcon(provider)}
                       <span>Connect {getProviderName(provider)} account</span>
                     </div>

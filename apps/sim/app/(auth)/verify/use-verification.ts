@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { client } from '@/lib/auth-client'
+import { client, useSession } from '@/lib/auth-client'
 import { env, isTruthy } from '@/lib/env'
 import { createLogger } from '@/lib/logs/console/logger'
 
@@ -34,6 +34,7 @@ export function useVerification({
 }: UseVerificationParams): UseVerificationReturn {
   const router = useRouter()
   const searchParams = useSearchParams()
+  const { refetch: refetchSession } = useSession()
   const [otp, setOtp] = useState('')
   const [email, setEmail] = useState('')
   const [isLoading, setIsLoading] = useState(false)
@@ -136,16 +137,15 @@ export function useVerification({
           }
         }
 
-        // Redirect to proper page after a short delay
         setTimeout(() => {
           if (isInviteFlow && redirectUrl) {
             // For invitation flow, redirect to the invitation page
-            router.push(redirectUrl)
+            window.location.href = redirectUrl
           } else {
             // Default redirect to dashboard
-            router.push('/workspace')
+            window.location.href = '/workspace'
           }
-        }, 2000)
+        }, 1000)
       } else {
         logger.info('Setting invalid OTP state - API error response')
         const message = 'Invalid verification code. Please check and try again.'
@@ -215,25 +215,33 @@ export function useVerification({
     setOtp(value)
   }
 
+  // Auto-submit when OTP is complete
+  useEffect(() => {
+    if (otp.length === 6 && email && !isLoading && !isVerified) {
+      const timeoutId = setTimeout(() => {
+        verifyCode()
+      }, 300) // Small delay to ensure UI is ready
+
+      return () => clearTimeout(timeoutId)
+    }
+  }, [otp, email, isLoading, isVerified])
+
   useEffect(() => {
     if (typeof window !== 'undefined') {
       if (!isProduction || !hasResendKey) {
         const storedEmail = sessionStorage.getItem('verificationEmail')
-        logger.info('Auto-verifying user', { email: storedEmail })
       }
 
       const isDevOrDocker = !isProduction || isTruthy(env.DOCKER_BUILD)
 
-      // Auto-verify and redirect in development/docker environments
       if (isDevOrDocker || !hasResendKey) {
         setIsVerified(true)
 
-        // Clear verification requirement cookie (same as manual verification)
         document.cookie =
           'requiresEmailVerification=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT'
 
         const timeoutId = setTimeout(() => {
-          router.push('/workspace')
+          window.location.href = '/workspace'
         }, 1000)
 
         return () => clearTimeout(timeoutId)

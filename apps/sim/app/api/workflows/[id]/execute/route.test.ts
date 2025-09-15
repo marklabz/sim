@@ -46,6 +46,11 @@ describe('Workflow Execution API Route', () => {
           remaining: 10,
           resetAt: new Date(),
         }),
+        checkRateLimitWithSubscription: vi.fn().mockResolvedValue({
+          allowed: true,
+          remaining: 10,
+          resetAt: new Date(),
+        }),
       })),
       RateLimitError: class RateLimitError extends Error {
         constructor(
@@ -63,6 +68,13 @@ describe('Workflow Execution API Route', () => {
         isExceeded: false,
         currentUsage: 10,
         limit: 100,
+      }),
+    }))
+
+    vi.doMock('@/lib/billing/core/subscription', () => ({
+      getHighestPrioritySubscription: vi.fn().mockResolvedValue({
+        plan: 'free',
+        referenceId: 'user-id',
       }),
     }))
 
@@ -150,6 +162,7 @@ describe('Workflow Execution API Route', () => {
       }),
       isHosted: vi.fn().mockReturnValue(false),
       getRotatingApiKey: vi.fn().mockReturnValue('rotated-api-key'),
+      generateRequestId: vi.fn(() => 'test-request-id'),
     }))
 
     vi.doMock('@/lib/logs/execution/logging-session', () => ({
